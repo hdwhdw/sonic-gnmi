@@ -133,7 +133,7 @@ func main() {
 
 	// For now, we'll run download synchronously since the current API
 	// doesn't support getting the session before download starts
-	_, result, err := download.DownloadFirmwareWithConfig(ctx, *url, *output, config)
+	_, result, err := download.DownloadFirmwareWithConfig(ctx, *url, *output, config, nil)
 	duration := time.Since(startTime)
 
 	if err != nil {

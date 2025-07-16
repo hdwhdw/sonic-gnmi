@@ -133,7 +133,7 @@ func TestDownloadFirmware_NetworkError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	session, result, err := DownloadFirmwareWithConfig(ctx, invalidURL, outputPath, config)
+	session, result, err := DownloadFirmwareWithConfig(ctx, invalidURL, outputPath, config, nil)
 
 	// Verify error
 	assert.NotNil(t, session) // Session should still exist even on error
@@ -541,7 +541,7 @@ func TestDownloadFirmware_Integration(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
-		session, result, err := DownloadFirmwareWithConfig(ctx, server.URL+"/slow", outputPath, config)
+		session, result, err := DownloadFirmwareWithConfig(ctx, server.URL+"/slow", outputPath, config, nil)
 
 		assert.NotNil(t, session) // Session should exist even on timeout
 		assert.Nil(t, result)

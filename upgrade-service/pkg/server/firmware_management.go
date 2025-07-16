@@ -302,7 +302,7 @@ func (s *firmwareManagementServer) DownloadFirmware(
 
 	// Start download in goroutine
 	go func(sessionID string) {
-		downloadSession, result, err := download.DownloadFirmwareWithConfig(downloadCtx, req.Url, outputPath, config)
+		_, result, err := download.DownloadFirmwareWithConfig(downloadCtx, req.Url, outputPath, config, sessionInfo.Session)
 
 		// Update session info with results
 		downloadMutex.Lock()
@@ -313,16 +313,7 @@ func (s *firmwareManagementServer) DownloadFirmware(
 			return
 		}
 
-		// Copy progress from the actual download session
-		if downloadSession != nil {
-			sessionInfo.Session.Downloaded = downloadSession.Downloaded
-			sessionInfo.Session.Total = downloadSession.Total
-			sessionInfo.Session.SpeedBytesPerSec = downloadSession.SpeedBytesPerSec
-			sessionInfo.Session.Status = downloadSession.Status
-			sessionInfo.Session.CurrentMethod = downloadSession.CurrentMethod
-			sessionInfo.Session.AttemptNumber = downloadSession.AttemptNumber
-			sessionInfo.Session.LastUpdate = downloadSession.LastUpdate
-		}
+		// No need to copy progress since we're using the same session object
 		sessionInfo.Result = result
 		if err != nil {
 			if downloadErr, ok := err.(*download.DownloadError); ok {

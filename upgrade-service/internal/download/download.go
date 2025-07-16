@@ -156,27 +156,30 @@ func DefaultDownloadConfig() *DownloadConfig {
 // If outputPath is empty, it will be automatically determined from the URL.
 // Returns both the session (for progress tracking) and final result.
 func DownloadFirmware(ctx context.Context, downloadURL, outputPath string) (*DownloadSession, *DownloadResult, error) {
-	return DownloadFirmwareWithConfig(ctx, downloadURL, outputPath, DefaultDownloadConfig())
+	return DownloadFirmwareWithConfig(ctx, downloadURL, outputPath, DefaultDownloadConfig(), nil)
 }
 
 // DownloadFirmwareWithConfig downloads a firmware image with custom configuration.
+// If session is provided, it will be used for progress tracking. If nil, a new session is created.
 // Returns both the session (for progress tracking) and final result.
 func DownloadFirmwareWithConfig(
-	ctx context.Context, downloadURL, outputPath string, config *DownloadConfig,
+	ctx context.Context, downloadURL, outputPath string, config *DownloadConfig, session *DownloadSession,
 ) (*DownloadSession, *DownloadResult, error) {
 	startTime := time.Now()
 	var attempts []Attempt
 
 	glog.V(1).Infof("Starting download of %s", downloadURL)
 
-	// Create download session
-	session := &DownloadSession{
-		ID:         fmt.Sprintf("download-%d", time.Now().UnixNano()),
-		URL:        downloadURL,
-		OutputPath: outputPath,
-		Status:     "starting",
-		StartTime:  startTime,
-		LastUpdate: startTime,
+	// Use provided session or create a new one
+	if session == nil {
+		session = &DownloadSession{
+			ID:         fmt.Sprintf("download-%d", time.Now().UnixNano()),
+			URL:        downloadURL,
+			OutputPath: outputPath,
+			Status:     "starting",
+			StartTime:  startTime,
+			LastUpdate: startTime,
+		}
 	}
 
 	// Determine output path if not provided
