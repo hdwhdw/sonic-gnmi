@@ -125,9 +125,15 @@ func init() {
 
 	// Command-specific flags
 	var downloadURL, outputPath, sessionID string
+	var connectTimeout, totalTimeout int
+	var expectedMD5 string
 	downloadCmd.Flags().StringVar(&downloadURL, "url", "", "URL to download from")
-	downloadCmd.Flags().StringVar(&outputPath, "output", "", "Output file path")
-	downloadCmd.Flags().StringVar(&sessionID, "session-id", "", "Session ID for resuming download")
+	downloadCmd.Flags().StringVar(&outputPath, "output-path", "", "Output file path (required)")
+	downloadCmd.Flags().IntVar(&connectTimeout, "connect-timeout", 30, "Connection timeout in seconds")
+	downloadCmd.Flags().IntVar(&totalTimeout, "total-timeout", 300, "Total download timeout in seconds")
+	downloadCmd.Flags().StringVar(&expectedMD5, "expected-md5", "", "Expected MD5 checksum for verification")
+	downloadCmd.MarkFlagRequired("url")
+	downloadCmd.MarkFlagRequired("output-path")
 
 	statusCmd.Flags().StringVar(&sessionID, "session-id", "", "Session ID to check status for")
 	statusCmd.MarkFlagRequired("session-id")
@@ -236,18 +242,65 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 func runDownload(cmd *cobra.Command, args []string) error {
 	url, _ := cmd.Flags().GetString("url")
-	output, _ := cmd.Flags().GetString("output")
-	sessionID, _ := cmd.Flags().GetString("session-id")
+	outputPath, _ := cmd.Flags().GetString("output-path")
+	connectTimeout, _ := cmd.Flags().GetInt("connect-timeout")
+	totalTimeout, _ := cmd.Flags().GetInt("total-timeout")
+	expectedMD5, _ := cmd.Flags().GetString("expected-md5")
 
-	if url == "" && sessionID == "" {
-		return fmt.Errorf("either --url or --session-id required")
+	// ✅ FAST: Validate all inputs first
+	if err := validateURL(url); err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	if err := validatePath(outputPath); err != nil {
+		return fmt.Errorf("invalid output path: %w", err)
+	}
+
+	if err := validateServerAddress(serverAddr); err != nil {
+		return fmt.Errorf("invalid server address: %w", err)
 	}
 
 	// Log the values for debugging
-	glog.V(2).Infof("Download command: url=%s, output=%s, sessionID=%s", url, output, sessionID)
+	glog.V(2).Infof("Download command: url=%s, output=%s, connectTimeout=%d, totalTimeout=%d",
+		url, outputPath, connectTimeout, totalTimeout)
 
-	// Download logic will be implemented in Phase 3 (download client)
-	return fmt.Errorf("download command not yet implemented")
+	// ✅ SLOW: Network operations after validation
+	// Create quick client
+	client, err := createQuickClient(serverAddr)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	// Create context with signal handling
+	ctx, cancel := createContextWithSignals(time.Duration(totalTimeout) * time.Second)
+	defer cancel()
+
+	// Start the download
+	fmt.Printf("Starting firmware download...\n")
+	fmt.Printf("  URL: %s\n", url)
+	fmt.Printf("  Output: %s\n", outputPath)
+	if expectedMD5 != "" {
+		fmt.Printf("  MD5: %s\n", expectedMD5)
+	}
+
+	// Call DownloadFirmware RPC
+	opts := &grpc.DownloadOptions{
+		ConnectTimeout: time.Duration(connectTimeout) * time.Second,
+		TotalTimeout:   time.Duration(totalTimeout) * time.Second,
+		ExpectedMD5:    expectedMD5,
+	}
+
+	resp, err := client.DownloadFirmware(ctx, url, outputPath, opts)
+	if err != nil {
+		return fmt.Errorf("failed to start download: %w", err)
+	}
+
+	fmt.Printf("\nDownload started with session ID: %s\n", resp.SessionId)
+
+	// Monitor progress
+	fmt.Println("\nMonitoring download progress...")
+	return monitorDownloadProgress(ctx, client, resp.SessionId)
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
