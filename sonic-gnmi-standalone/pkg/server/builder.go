@@ -3,8 +3,10 @@ package server
 
 import (
 	"github.com/golang/glog"
+	"github.com/openconfig/gnmi/proto/gnmi"
 
 	"github.com/sonic-net/sonic-gnmi/sonic-gnmi-standalone/pkg/server/config"
+	gnmiserver "github.com/sonic-net/sonic-gnmi/sonic-gnmi-standalone/pkg/server/gnmi"
 )
 
 // ServerBuilder provides a fluent interface for configuring and building a gRPC server
@@ -42,6 +44,13 @@ func (b *ServerBuilder) WithRootFS(rootFS string) *ServerBuilder {
 // operations including package management, reboot, and system information.
 func (b *ServerBuilder) EnableGNOISystem() *ServerBuilder {
 	b.services["gnoi.system"] = true
+	return b
+}
+
+// EnableGNMI enables the gNMI service, which provides network management
+// interface for configuration and operational state retrieval.
+func (b *ServerBuilder) EnableGNMI() *ServerBuilder {
+	b.services["gnmi"] = true
 	return b
 }
 
@@ -84,15 +93,21 @@ func (b *ServerBuilder) Build() (*Server, error) {
 
 // registerServices registers all enabled services with the gRPC server.
 // This method handles the service-specific registration logic and logging.
-// Infrastructure-only implementation - service registrations are added by extending this method.
 func (b *ServerBuilder) registerServices(srv *Server, rootFS string) {
 	serviceCount := 0
 
-	// Service registration will be implemented for:
+	// Register gNMI service if enabled
+	if b.services["gnmi"] {
+		gnmiSrv := gnmiserver.NewServer(rootFS)
+		gnmi.RegisterGNMIServer(srv.grpcServer, gnmiSrv)
+		glog.Info("Registered gNMI service")
+		serviceCount++
+	}
+
+	// Future service registrations:
 	// - gNOI System service
 	// - gNOI File service
 	// - gNOI Containerz service
-	// - gNMI service
 
 	if serviceCount == 0 {
 		glog.Info("Server created with gRPC reflection only - no services enabled")
