@@ -27,11 +27,13 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 
 	"github.com/golang/glog"
 	"github.com/openconfig/gnoi/system"
 
 	"github.com/sonic-net/sonic-gnmi/sonic-gnmi-standalone/pkg/cert"
+	"github.com/sonic-net/sonic-gnmi/sonic-gnmi-standalone/pkg/server/auth"
 	"github.com/sonic-net/sonic-gnmi/sonic-gnmi-standalone/pkg/server/config"
 	gnoiSystem "github.com/sonic-net/sonic-gnmi/sonic-gnmi-standalone/pkg/server/gnoi/system"
 )
@@ -203,59 +205,44 @@ func (b *ServerBuilder) Build() (*Server, error) {
 		rootFS = config.Global.RootFS
 	}
 
-	// Create the base gRPC server
-	var srv *Server
-	var err error
-
-	if b.certConfig != nil {
-		// TLS with certificate manager - use builder certificate configuration
-		var certMgr cert.CertificateManager
-		certMgr, err = b.createCertificateManager()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create certificate manager: %w", err)
-		}
-		srv, err = NewServerWithCertManager(addr, certMgr)
-	} else if b.tlsConfig != nil && b.tlsConfig.enabled {
-		// TLS with legacy configuration - create certificate manager from legacy parameters
-		var certMgr cert.CertificateManager
-		certConfig := &cert.CertConfig{
-			CertFile:          b.tlsConfig.certFile,
-			KeyFile:           b.tlsConfig.keyFile,
-			CAFile:            b.tlsConfig.caCertFile,
-			RequireClientCert: b.tlsConfig.mtlsEnabled,
-			MinTLSVersion:     tls.VersionTLS12,
-			EnableMonitoring:  false,
-		}
-		// Apply default security settings
-		defaultConfig := cert.NewDefaultConfig()
-		certConfig.CipherSuites = defaultConfig.CipherSuites
-		certConfig.CurvePreferences = defaultConfig.CurvePreferences
-		certMgr = cert.NewCertificateManager(certConfig)
-		srv, err = NewServerWithCertManager(addr, certMgr)
-	} else if config.Global.TLSEnabled {
-		// TLS from global configuration - create certificate manager from global config
-		var certMgr cert.CertificateManager
-		certConfig := &cert.CertConfig{
-			CertFile:          config.Global.TLSCertFile,
-			KeyFile:           config.Global.TLSKeyFile,
-			CAFile:            config.Global.TLSCACertFile,
-			RequireClientCert: config.Global.MTLSEnabled,
-			MinTLSVersion:     tls.VersionTLS12,
-			EnableMonitoring:  false,
-		}
-		// Apply default security settings
-		defaultConfig := cert.NewDefaultConfig()
-		certConfig.CipherSuites = defaultConfig.CipherSuites
-		certConfig.CurvePreferences = defaultConfig.CurvePreferences
-		certMgr = cert.NewCertificateManager(certConfig)
-		srv, err = NewServerWithCertManager(addr, certMgr)
-	} else {
-		// TLS is disabled - create insecure server
-		srv, err = NewInsecureServer(addr)
+	// Create network listener
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 
+	// Create certificate manager and authorizer
+	certMgr, authorizer, err := b.createCertManagerAndAuth()
 	if err != nil {
 		return nil, err
+	}
+
+	// Load certificates if certificate manager exists
+	if certMgr != nil {
+		if err := certMgr.LoadCertificates(); err != nil {
+			return nil, fmt.Errorf("failed to load certificates: %w", err)
+		}
+
+		// Start monitoring if enabled
+		if err := certMgr.StartMonitoring(); err != nil {
+			glog.Warningf("Failed to start certificate monitoring: %v", err)
+		}
+	}
+
+	// Create gRPC server with authorization
+	grpcServer, err := auth.NewServerWithAuth(addr, certMgr, authorizer)
+	if err != nil {
+		if certMgr != nil {
+			certMgr.StopMonitoring()
+		}
+		return nil, fmt.Errorf("failed to create gRPC server: %w", err)
+	}
+
+	// Create Server wrapper
+	srv := &Server{
+		grpcServer: grpcServer,
+		listener:   lis,
+		certMgr:    certMgr,
 	}
 
 	// Register enabled services
@@ -303,6 +290,91 @@ func (b *ServerBuilder) createCertificateManager() (cert.CertificateManager, err
 	}
 
 	return nil, nil
+}
+
+// createCertManagerAndAuth creates certificate manager and authorizer based on builder config.
+func (b *ServerBuilder) createCertManagerAndAuth() (cert.CertificateManager, auth.Authorizer, error) {
+	if b.certConfig != nil {
+		return b.createFromBuilderConfig()
+	}
+	if b.tlsConfig != nil && b.tlsConfig.enabled {
+		return b.createFromTLSConfig()
+	}
+	if config.Global.TLSEnabled {
+		return b.createFromGlobalConfig()
+	}
+	return nil, nil, nil
+}
+
+func (b *ServerBuilder) createFromBuilderConfig() (cert.CertificateManager, auth.Authorizer, error) {
+	certMgr, err := b.createCertificateManager()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create certificate manager: %w", err)
+	}
+
+	clientAuthMgr := cert.NewClientAuthManager(
+		b.certConfig.redisAddr,
+		b.certConfig.redisDB,
+		b.certConfig.configTableName,
+	)
+	if err := clientAuthMgr.LoadClientCertConfig(); err != nil {
+		glog.Warningf("Failed to load client certificate config: %v", err)
+	}
+
+	authorizer := auth.NewCertAuthorizer(clientAuthMgr)
+	return certMgr, authorizer, nil
+}
+
+func (b *ServerBuilder) createFromTLSConfig() (cert.CertificateManager, auth.Authorizer, error) {
+	certConfig := &cert.CertConfig{
+		CertFile:          b.tlsConfig.certFile,
+		KeyFile:           b.tlsConfig.keyFile,
+		CAFile:            b.tlsConfig.caCertFile,
+		RequireClientCert: b.tlsConfig.mtlsEnabled,
+		MinTLSVersion:     tls.VersionTLS12,
+		EnableMonitoring:  false,
+	}
+	defaultConfig := cert.NewDefaultConfig()
+	certConfig.CipherSuites = defaultConfig.CipherSuites
+	certConfig.CurvePreferences = defaultConfig.CurvePreferences
+	certMgr := cert.NewCertificateManager(certConfig)
+
+	var authorizer auth.Authorizer
+	if b.tlsConfig.mtlsEnabled {
+		clientAuthMgr := cert.NewClientAuthManager("localhost:6379", 4, "GNMI_CLIENT_CERT")
+		if err := clientAuthMgr.LoadClientCertConfig(); err != nil {
+			glog.Warningf("Failed to load client certificate config: %v", err)
+		}
+		authorizer = auth.NewCertAuthorizer(clientAuthMgr)
+	}
+
+	return certMgr, authorizer, nil
+}
+
+func (b *ServerBuilder) createFromGlobalConfig() (cert.CertificateManager, auth.Authorizer, error) {
+	certConfig := &cert.CertConfig{
+		CertFile:          config.Global.TLSCertFile,
+		KeyFile:           config.Global.TLSKeyFile,
+		CAFile:            config.Global.TLSCACertFile,
+		RequireClientCert: config.Global.MTLSEnabled,
+		MinTLSVersion:     tls.VersionTLS12,
+		EnableMonitoring:  false,
+	}
+	defaultConfig := cert.NewDefaultConfig()
+	certConfig.CipherSuites = defaultConfig.CipherSuites
+	certConfig.CurvePreferences = defaultConfig.CurvePreferences
+	certMgr := cert.NewCertificateManager(certConfig)
+
+	var authorizer auth.Authorizer
+	if config.Global.MTLSEnabled {
+		clientAuthMgr := cert.NewClientAuthManager("localhost:6379", 4, "GNMI_CLIENT_CERT")
+		if err := clientAuthMgr.LoadClientCertConfig(); err != nil {
+			glog.Warningf("Failed to load client certificate config: %v", err)
+		}
+		authorizer = auth.NewCertAuthorizer(clientAuthMgr)
+	}
+
+	return certMgr, authorizer, nil
 }
 
 // registerServices registers all enabled services with the gRPC server.

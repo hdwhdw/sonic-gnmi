@@ -130,6 +130,25 @@ func (cam *ClientAuthManager) GetAuthorizedCNs() []string {
 	return cns
 }
 
+// GetRolesForCN returns the roles for a given client CN.
+func (cam *ClientAuthManager) GetRolesForCN(cn string) []string {
+	cam.mu.RLock()
+	defer cam.mu.RUnlock()
+
+	roleStr, exists := cam.clientCNRoles[cn]
+	if !exists {
+		return nil
+	}
+
+	// Split comma-separated roles
+	roles := strings.Split(roleStr, ",")
+	for i, role := range roles {
+		roles[i] = strings.TrimSpace(role)
+	}
+
+	return roles
+}
+
 // AddClientCN adds a client CN with its role (for testing).
 func (cam *ClientAuthManager) AddClientCN(cn, role string) {
 	cam.mu.Lock()
