@@ -58,6 +58,29 @@ func StreamAuthMiddleware(auth Authorizer) grpc.StreamServerInterceptor {
 	}
 }
 
+// gnoiMethods maps gNOI service.method to write access requirement.
+// Key format: "service.Method" (e.g., "system.SetPackage", "file.Remove").
+var gnoiMethods = map[string]bool{
+	// System service methods
+	"system.SetPackage":             true,  // write
+	"system.Reboot":                 true,  // write
+	"system.KillProcess":            true,  // write
+	"system.SwitchControlProcessor": true,  // write
+	"system.CancelReboot":           true,  // write
+	"system.Ping":                   false, // read
+	"system.Traceroute":             false, // read
+	"system.Time":                   false, // read
+	"system.RebootStatus":           false, // read
+}
+
+// gnmiMethods maps gNMI methods to write access requirement.
+// Since gNMI has only one service, we use just the method name.
+var gnmiMethods = map[string]bool{
+	"Set":       true,  // write
+	"Get":       false, // read
+	"Subscribe": false, // read
+}
+
 // parseMethod extracts service name and write access requirement from gRPC method name.
 func parseMethod(fullMethod string) (service string, writeAccess bool) {
 	glog.V(3).Infof("Parsing method: %s", fullMethod)
@@ -69,50 +92,52 @@ func parseMethod(fullMethod string) (service string, writeAccess bool) {
 		return "", false // Empty service means skip authorization
 	}
 
-	switch {
-	case strings.Contains(fullMethod, "/gnoi.system.System/"):
-		// Extract the method name from "/gnoi.system.System/MethodName"
-		parts := strings.Split(fullMethod, "/")
-		if len(parts) >= 3 {
-			methodName := parts[len(parts)-1]
-
-			// Define which gNOI System methods require write access
-			writeOps := []string{
-				"Reboot", "KillProcess", "SetPackage",
-				"SwitchControlProcessor", "CancelReboot",
-			}
-
-			for _, op := range writeOps {
-				if methodName == op {
-					glog.V(3).Infof("Method %s requires write access", methodName)
-					return "gnoi", true
-				}
-			}
-
-			glog.V(3).Infof("Method %s requires read access", methodName)
-			return "gnoi", false
-		}
-		return "gnoi", false
-
-	case strings.Contains(fullMethod, "/gnmi.gNMI/"):
-		// Extract method name for gNMI service
-		parts := strings.Split(fullMethod, "/")
-		if len(parts) >= 3 {
-			methodName := parts[len(parts)-1]
-
-			// Only "Set" requires write access in gNMI
-			if methodName == "Set" {
-				glog.V(3).Infof("gNMI Set method requires write access")
-				return "gnmi", true
-			}
-
-			glog.V(3).Infof("gNMI %s method requires read access", methodName)
-			return "gnmi", false
-		}
-		return "gnmi", false
-
-	default:
-		glog.V(2).Infof("Unknown service for method %s, defaulting to unknown/read", fullMethod)
+	// Extract service and method from fullMethod
+	// Format: /package.ServiceName/MethodName
+	parts := strings.Split(fullMethod, "/")
+	if len(parts) < 3 {
+		glog.V(2).Infof("Invalid method format: %s", fullMethod)
 		return "unknown", false
 	}
+
+	grpcServiceName := parts[1] // e.g., "gnoi.system.System" or "gnmi.gNMI"
+	methodName := parts[2]      // e.g., "SetPackage" or "Get"
+
+	// Handle gNOI services (all start with "gnoi.")
+	if strings.HasPrefix(grpcServiceName, "gnoi.") {
+		// Extract service name from grpcServiceName (e.g., "gnoi.system.System" -> "system")
+		serviceParts := strings.Split(grpcServiceName, ".")
+		if len(serviceParts) >= 2 {
+			serviceName := serviceParts[1]                  // "system", "file", "cert", etc.
+			serviceMethod := serviceName + "." + methodName // "system.SetPackage"
+
+			if writeAccess, exists := gnoiMethods[serviceMethod]; exists {
+				glog.V(3).Infof("gNOI method %s mapped to write=%t", serviceMethod, writeAccess)
+				return "gnoi", writeAccess
+			}
+
+			// Unknown gNOI method - default to read access
+			glog.V(2).Infof("Unknown gNOI method %s, defaulting to read", serviceMethod)
+			return "gnoi", false
+		}
+
+		glog.V(2).Infof("Invalid gNOI service name format: %s", grpcServiceName)
+		return "gnoi", false
+	}
+
+	// Handle gNMI service
+	if grpcServiceName == "gnmi.gNMI" {
+		if writeAccess, exists := gnmiMethods[methodName]; exists {
+			glog.V(3).Infof("gNMI method %s mapped to write=%t", methodName, writeAccess)
+			return "gnmi", writeAccess
+		}
+
+		// Unknown gNMI method - default to read access
+		glog.V(2).Infof("Unknown gNMI method %s, defaulting to read", methodName)
+		return "gnmi", false
+	}
+
+	// Unknown service
+	glog.V(2).Infof("Unknown service for method %s", fullMethod)
+	return "unknown", false
 }
