@@ -76,3 +76,63 @@ func validateDiskSpacePath(path *gnmi.Path) error {
 
 	return nil
 }
+
+// isSonicImagePath checks if the given path is requesting SONIC image file information.
+// Returns true if the path starts with /sonic/system/sonic-image.
+func isSonicImagePath(path *gnmi.Path) bool {
+	return len(path.Elem) >= 3 &&
+		path.Elem[0].Name == "sonic" &&
+		path.Elem[1].Name == "system" &&
+		path.Elem[2].Name == "sonic-image"
+}
+
+// extractSonicImageDirectory extracts the SONIC image directory path from a gNMI path.
+// For example, from /sonic/system/sonic-image[directory=/lib/sonic-images]/files,
+// it extracts "/lib/sonic-images".
+func extractSonicImageDirectory(path *gnmi.Path) (string, error) {
+	if !isSonicImagePath(path) {
+		return "", fmt.Errorf("not a SONIC image path: %s", pathToString(path))
+	}
+
+	sonicImageDir, ok := path.Elem[2].Key["directory"]
+	if !ok {
+		return "", fmt.Errorf("SONIC image directory not specified, expected format: " +
+			"/sonic/system/sonic-image[directory=<path>]/...")
+	}
+
+	return sonicImageDir, nil
+}
+
+// isSonicImageFilesPath checks if the path is requesting SONIC image files listing.
+// Returns true if the path contains /files.
+func isSonicImageFilesPath(path *gnmi.Path) bool {
+	return isSonicImagePath(path) &&
+		len(path.Elem) >= 4 &&
+		path.Elem[3].Name == "files"
+}
+
+// getSonicImageFileField determines which SONIC image file field is being requested.
+// Returns "list", "count", or specific filename based on the path.
+func getSonicImageFileField(path *gnmi.Path) (string, error) {
+	if !isSonicImageFilesPath(path) {
+		return "", fmt.Errorf("not a SONIC image files path: %s", pathToString(path))
+	}
+
+	// If path ends at files, return list of all files
+	if len(path.Elem) == 4 {
+		return "list", nil
+	}
+
+	// If path has a specific field, check what it is
+	if len(path.Elem) == 5 {
+		switch path.Elem[4].Name {
+		case "count":
+			return "count", nil
+		default:
+			// Assume it's a specific filename
+			return path.Elem[4].Name, nil
+		}
+	}
+
+	return "", fmt.Errorf("invalid SONIC image files path structure: %s", pathToString(path))
+}

@@ -195,7 +195,7 @@ func (b *ServerBuilder) EnableGNMI() *ServerBuilder {
 }
 
 // EnableServices enables multiple services at once based on a slice of service names.
-// Valid service names include: "gnoi.system", "gnoi.file", "gnoi.containerz", "gnmi".
+// Valid service names include: "gnoi.system", "gnmi".
 func (b *ServerBuilder) EnableServices(services []string) *ServerBuilder {
 	for _, service := range services {
 		b.services[service] = true
@@ -343,7 +343,6 @@ func (b *ServerBuilder) registerServices(srv *Server, rootFS string) {
 	}
 
 	// Future services will be implemented:
-	// - gNOI File service
 	// - gNOI Containerz service
 
 	if serviceCount == 0 {

@@ -64,6 +64,8 @@ func (s *Server) processPath(path *gnmi.Path) (*gnmi.Update, error) {
 	switch {
 	case isFilesystemPath(path):
 		return s.handleFilesystemPath(path)
+	case isSonicImagePath(path):
+		return s.handleSonicImagePath(path)
 	default:
 		return nil, status.Errorf(codes.NotFound, "path not found: %s", pathStr)
 	}
