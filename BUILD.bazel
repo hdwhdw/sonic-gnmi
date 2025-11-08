@@ -1,0 +1,57 @@
+"""
+Root BUILD file for SONiC gNMI Pure Packages
+
+This file defines workspace-level targets for the pure package infrastructure.
+Pure packages are those that don't require CGO or SONiC-specific dependencies.
+"""
+
+load("@gazelle//:def.bzl", "gazelle")
+
+# Gazelle target for automatic BUILD file generation and dependency management
+gazelle(name = "gazelle")
+
+# Update gazelle target that also runs go mod tidy
+gazelle(
+    name = "gazelle-update-repos",
+    args = [
+        "-from_file=go.mod",
+        "-to_macro=deps.bzl%go_dependencies",
+        "-prune",
+    ],
+    command = "update-repos",
+)
+
+# Test suite for all pure packages  
+test_suite(
+    name = "pure_tests",
+    tests = [
+        "//internal/diskspace:diskspace_test",
+        "//internal/hash:hash_test", 
+        "//internal/download:download_test",
+        "//internal/firmware:firmware_test",
+    ],
+    tags = ["pure"],
+)
+
+# Build suite for all pure packages
+filegroup(
+    name = "pure_libs",
+    srcs = [
+        "//internal/diskspace:diskspace",
+        "//internal/hash:hash",
+        "//internal/download:download", 
+        "//internal/firmware:firmware",
+    ],
+    tags = ["pure"],
+)
+
+# Convenience alias targets that match pure.mk functionality
+alias(
+    name = "pure_test",
+    actual = ":pure_tests",
+)
+
+alias(
+    name = "pure_build", 
+    actual = ":pure_libs",
+)

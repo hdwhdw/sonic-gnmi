@@ -29,6 +29,10 @@ swsscommon/swsscommon_wrap.h
 coverage.out
 coverage-*.txt
 
+# Bazel build outputs
+bazel-*
+MODULE.bazel.lock
+
 # Python cache
 __pycache__/
 *.pyc

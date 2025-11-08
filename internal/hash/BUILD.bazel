@@ -1,0 +1,21 @@
+"""
+BUILD file for hash package
+
+Pure Go package for cryptographic hash calculation utilities.
+No CGO or external dependencies required.
+"""
+
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hash",
+    srcs = ["hash.go"],
+    importpath = "github.com/sonic-net/sonic-gnmi/internal/hash",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "hash_test",
+    srcs = ["hash_test.go"],
+    embed = [":hash"],
+)

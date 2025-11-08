@@ -1,0 +1,28 @@
+"""
+BUILD file for firmware package
+
+Pure Go package for firmware file detection and monitoring utilities.
+No CGO or external dependencies required.
+"""
+
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "firmware",
+    srcs = ["firmware.go"],
+    importpath = "github.com/sonic-net/sonic-gnmi/internal/firmware",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_golang_glog//:glog",
+    ],
+)
+
+go_test(
+    name = "firmware_test",
+    srcs = ["firmware_test.go"],
+    embed = [":firmware"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

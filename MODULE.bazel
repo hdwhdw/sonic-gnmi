@@ -1,0 +1,38 @@
+"""
+SONiC gNMI Bazel Module - Pure Packages Infrastructure
+
+This module sets up Bazel build infrastructure for the pure Go packages
+that don't require CGO or SONiC-specific dependencies. This enables:
+- Faster, hermetic builds
+- Better dependency isolation  
+- Incremental migration from traditional Makefile to Bazel
+"""
+
+module(
+    name = "sonic-gnmi-pure",
+    version = "0.1.0",
+)
+
+# Core Bazel rules
+bazel_dep(name = "rules_go", version = "0.50.1")
+bazel_dep(name = "gazelle", version = "0.35.0")
+bazel_dep(name = "rules_proto", version = "6.0.2")
+
+# Go dependencies management (simplified for pure packages only)
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+
+# Only add dependencies we actually need for the working pure packages
+go_deps.module(
+    path = "github.com/golang/glog",
+    version = "v0.0.0-20160126235308-23def4e6c14b",
+)
+go_deps.module(
+    path = "github.com/stretchr/testify",
+    version = "v1.9.0",
+)
+
+use_repo(
+    go_deps,
+    "com_github_golang_glog",
+    "com_github_stretchr_testify",
+)

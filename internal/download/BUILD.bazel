@@ -1,0 +1,21 @@
+"""
+BUILD file for download package
+
+Pure Go package for HTTP file download functionality.
+No CGO or external dependencies required.
+"""
+
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "download",
+    srcs = ["download.go"],
+    importpath = "github.com/sonic-net/sonic-gnmi/internal/download",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "download_test",
+    srcs = ["download_test.go"],
+    embed = [":download"],
+)

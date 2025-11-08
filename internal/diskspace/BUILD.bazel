@@ -1,0 +1,21 @@
+"""
+BUILD file for diskspace package
+
+Pure Go package for filesystem disk space monitoring utilities.
+No CGO or external dependencies required.
+"""
+
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "diskspace",
+    srcs = ["diskspace.go"],
+    importpath = "github.com/sonic-net/sonic-gnmi/internal/diskspace",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "diskspace_test",
+    srcs = ["diskspace_test.go"],
+    embed = [":diskspace"],
+)

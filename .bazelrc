@@ -1,0 +1,52 @@
+# SONiC gNMI Bazel Configuration
+# Optimized for pure Go package development
+
+# Enable Bzlmod (MODULE.bazel) - required for Bazel 8+
+common --enable_bzlmod
+
+# Build configuration
+build --show_timestamps
+build --announce_rc
+build --verbose_failures
+build --incompatible_strict_action_env
+
+# Go specific configuration
+build --incompatible_enable_cc_toolchain_resolution
+
+# Test configuration 
+test --test_output=errors
+test --build_tests_only
+test --test_verbose_timeout_warnings
+test --test_env=GO_TEST_TIMEOUT_SCALE=10
+
+# Enable race detection for tests  
+test --@rules_go//go/config:race
+
+# Performance optimization
+build --local_resources=memory=HOST_RAM*0.8
+build --local_resources=cpu=HOST_CPUS-1
+
+# Remote execution friendly
+# build --incompatible_remote_results_ignore_disk
+
+# Developer convenience
+build --color=yes
+test --color=yes
+
+# Coverage configuration
+coverage --combined_report=lcov
+coverage --coverage_report_generator=@bazel_tools//tools/test:coverage_report_generator
+
+# CI configuration (use with --config=ci)
+build:ci --nobuild_runfile_links
+build:ci --remote_accept_cached
+test:ci --test_output=xml
+
+# Debug configuration (use with --config=debug)
+build:debug --compilation_mode=dbg
+build:debug --strip=never
+build:debug --linkopt=-Wl,--gdb-index
+
+# Release configuration (use with --config=release)  
+build:release --compilation_mode=opt
+build:release --strip=always
