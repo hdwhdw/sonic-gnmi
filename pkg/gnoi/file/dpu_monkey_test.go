@@ -25,8 +25,8 @@ func TestDPU_SuccessPathMocking(t *testing.T) {
 		return &grpc.ClientConn{}, nil
 	})
 
-	// 2. Mock gnoi_file_pb.NewFileClient
-	patches.ApplyFunc(gnoi_file_pb.NewFileClient, func(cc grpc.ClientConnInterface) gnoi_file_pb.FileClient {
+	// 2. Mock newFileClient package variable (avoids inlining issues with gomonkey)
+	patches.ApplyGlobalVar(&newFileClient, func(cc grpc.ClientConnInterface) gnoi_file_pb.FileClient {
 		return &mockSuccessFileClient{}
 	})
 
@@ -61,7 +61,7 @@ func TestDPU_ContainerPathBranches(t *testing.T) {
 		return &grpc.ClientConn{}, nil
 	})
 
-	patches.ApplyFunc(gnoi_file_pb.NewFileClient, func(cc grpc.ClientConnInterface) gnoi_file_pb.FileClient {
+	patches.ApplyGlobalVar(&newFileClient, func(cc grpc.ClientConnInterface) gnoi_file_pb.FileClient {
 		return &mockFailureFileClient{}
 	})
 
@@ -122,7 +122,7 @@ func TestDPU_StreamingSuccess(t *testing.T) {
 	})
 
 	// Mock file client to return success
-	patches.ApplyFunc(gnoi_file_pb.NewFileClient, func(cc grpc.ClientConnInterface) gnoi_file_pb.FileClient {
+	patches.ApplyGlobalVar(&newFileClient, func(cc grpc.ClientConnInterface) gnoi_file_pb.FileClient {
 		return &mockSuccessFileClient{}
 	})
 

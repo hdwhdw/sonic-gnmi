@@ -35,6 +35,10 @@ const (
 	maxFileSize = 4 * 1024 * 1024 * 1024 // 4GB in bytes
 )
 
+// newFileClient wraps gnoi_file_pb.NewFileClient to allow test patching
+// (the generated function is tiny and gets inlined, defeating gomonkey).
+var newFileClient = gnoi_file_pb.NewFileClient
+
 // HandleTransferToRemote implements the complete logic for the TransferToRemote RPC.
 // It validates the request, checks for DPU metadata, and routes accordingly.
 //
@@ -417,7 +421,7 @@ func HandleTransferToRemoteForDPUStreaming(
 		return nil, status.Errorf(codes.Internal, "failed to get DPU connection: %v", err)
 	}
 
-	fileClient := gnoi_file_pb.NewFileClient(conn)
+	fileClient := newFileClient(conn)
 
 	// Step 3: Create DPU Put stream
 	putClient, err := fileClient.Put(streamCtx)
