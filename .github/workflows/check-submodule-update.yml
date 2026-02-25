@@ -1,0 +1,55 @@
+name: Check Submodule Update Status
+
+on:
+  schedule:
+    - cron: '0 8 * * 1-5'  # Weekdays 8AM UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.search.issuesAndPullRequests({
+              q: 'repo:sonic-net/sonic-buildimage is:pr is:open "submodule" "sonic-gnmi" in:title author:mssonicbld'
+            });
+
+            const now = new Date();
+            const THRESHOLD_HOURS = 96;
+
+            for (const pr of data.items) {
+              const ageHours = (now - new Date(pr.created_at)) / 3600000;
+              if (ageHours < THRESHOLD_HOURS) continue;
+
+              const existing = await github.rest.search.issuesAndPullRequests({
+                q: `repo:sonic-net/sonic-gnmi is:issue is:open "buildimage#${pr.number}" in:title`
+              });
+              if (existing.data.total_count > 0) continue;
+
+              const branch = pr.title.match(/\[submodule\]\[(\w+)\]/)?.[1] || 'unknown';
+              const ageDays = Math.floor(ageHours / 24);
+
+              await github.rest.issues.create({
+                owner: 'sonic-net',
+                repo: 'sonic-gnmi',
+                title: `Stuck submodule update: buildimage#${pr.number} (${branch})`,
+                body: [
+                  `The sonic-gnmi submodule update PR in sonic-buildimage has been open for ${ageDays} days.`,
+                  ``,
+                  `**PR:** ${pr.html_url}`,
+                  `**Branch:** ${branch}`,
+                  `**Created:** ${pr.created_at}`,
+                  `**Comments:** ${pr.comments} (likely repeated CI retries)`,
+                  ``,
+                  `This usually means Azure Pipelines is failing to run. Investigate the PR and determine if a rebase, manual CI trigger, or code fix is needed.`,
+                ].join('\n'),
+                labels: ['submodule-stuck'],
+              });
+
+              console.log(`Filed issue for stuck PR #${pr.number} (${branch}, ${ageDays} days old)`);
+            }
