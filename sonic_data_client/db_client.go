@@ -560,7 +560,8 @@ func useRedisTcpClient() error {
 			if dbName != "OTHERS" {
 				addr, err := sdcfg.GetDbTcpAddr(dbName, dbNamespace)
 				if err != nil {
-					return err
+					log.Warningf("Skipping %s in namespace %s: %v", dbName, dbNamespace, err)
+					continue
 				}
 				// DB connector for direct redis operation
 				redisDb := redis.NewClient(&redis.Options{
@@ -579,6 +580,10 @@ func useRedisTcpClient() error {
 
 // Client package prepare redis clients to all DBs automatically
 func init() {
+	initRedisDbClients()
+}
+
+func initRedisDbClients() {
 	AllNamespaces, err := sdcfg.GetDbAllNamespaces()
 	if err != nil {
 		log.Errorf("init error:  %v", err)
@@ -590,8 +595,8 @@ func init() {
 			if dbName != "OTHERS" {
 				addr, err := sdcfg.GetDbSock(dbName, dbNamespace)
 				if err != nil {
-					log.Errorf("init error:  %v", err)
-					return
+					log.Warningf("Skipping %s in namespace %s: %v", dbName, dbNamespace, err)
+					continue
 				}
 				// DB connector for direct redis operation
 				redisDb := redis.NewClient(&redis.Options{
