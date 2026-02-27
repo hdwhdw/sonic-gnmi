@@ -272,7 +272,6 @@ stages:
     - bash: |
         set -euo pipefail
         pip3 install --quiet diff-cover
-        cd sonic-gnmi
         diff-cover \
           $(Pipeline.Workspace)/coverage-integration/coverage.xml \
           $(Pipeline.Workspace)/coverage-pure/coverage-pure.xml \
