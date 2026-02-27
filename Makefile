@@ -240,7 +240,8 @@ INTEGRATION_BASIC_PKGS := \
 	github.com/sonic-net/sonic-gnmi/sonic_db_config \
 	github.com/sonic-net/sonic-gnmi/sonic_service_client \
 	github.com/sonic-net/sonic-gnmi/telemetry \
-	github.com/sonic-net/sonic-gnmi/sonic_data_client
+	github.com/sonic-net/sonic-gnmi/sonic_data_client \
+	github.com/sonic-net/sonic-gnmi/testpkg/integration
 
 # Integration test packages that need special environment
 INTEGRATION_ENV_PKGS := \
@@ -420,5 +421,16 @@ endif
 	rm $(DESTDIR)/usr/sbin/gnoi_openconfig_client
 	rm $(DESTDIR)/usr/sbin/gnoi_sonic_client
 	rm $(DESTDIR)/usr/sbin/gnmi_dump
+
+
+TARGET_BRANCH ?= origin/master
+DIFF_COVER_THRESHOLD ?= 80
+
+.PHONY: diff-cover
+diff-cover: coverage.xml
+	diff-cover coverage.xml \
+		--compare-branch $(TARGET_BRANCH) \
+		--src-roots . \
+		--fail-under $(DIFF_COVER_THRESHOLD)
 
 

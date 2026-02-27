@@ -26,7 +26,8 @@ PURE_PACKAGES := \
 	pkg/gnoi/file \
 	pkg/exec \
 	pkg/gnoi/os \
-	pkg/gnoi/system
+	pkg/gnoi/system \
+	testpkg/pure
 
 # Future packages to make pure:
 # TODO: sonic-gnmi-standalone/pkg/workflow
