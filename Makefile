@@ -426,8 +426,8 @@ TARGET_BRANCH ?= origin/master
 DIFF_COVER_THRESHOLD ?= 80
 
 .PHONY: diff-cover
-diff-cover: coverage.xml
-	diff-cover coverage.xml \
+diff-cover: coverage.xml test-results/coverage-pure.xml
+	diff-cover coverage.xml test-results/coverage-pure.xml \
 		--compare-branch $(TARGET_BRANCH) \
 		--src-roots . \
 		--fail-under $(DIFF_COVER_THRESHOLD)

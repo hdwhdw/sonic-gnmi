@@ -93,7 +93,6 @@ stages:
       displayName: 'Publish Pure Package Coverage'
       condition: always()
       inputs:
-        codeCoverageTool: Cobertura
         summaryFileLocation: '$(System.DefaultWorkingDirectory)/sonic-gnmi/test-results/coverage-pure.xml'
 
     - publish: $(System.DefaultWorkingDirectory)/sonic-gnmi/test-results/coverage-pure.xml
@@ -242,7 +241,6 @@ stages:
 
     - task: PublishCodeCoverageResults@2
       inputs:
-        codeCoverageTool: Cobertura
         summaryFileLocation: '$(System.DefaultWorkingDirectory)/sonic-gnmi/coverage.xml'
       displayName: 'Publish coverage'
 
@@ -254,7 +252,7 @@ stages:
   - job: DiffCoverageCheck
     displayName: "Diff Coverage Check"
     dependsOn: [PureCIJob, build]
-    condition: eq(variables['Build.Reason'], 'PullRequest')
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
     timeoutInMinutes: 10
     pool:
       vmImage: ubuntu-22.04
