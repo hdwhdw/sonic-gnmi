@@ -240,8 +240,7 @@ INTEGRATION_BASIC_PKGS := \
 	github.com/sonic-net/sonic-gnmi/sonic_db_config \
 	github.com/sonic-net/sonic-gnmi/sonic_service_client \
 	github.com/sonic-net/sonic-gnmi/telemetry \
-	github.com/sonic-net/sonic-gnmi/sonic_data_client \
-	github.com/sonic-net/sonic-gnmi/testpkg/integration
+	github.com/sonic-net/sonic-gnmi/sonic_data_client
 
 # Integration test packages that need special environment
 INTEGRATION_ENV_PKGS := \
