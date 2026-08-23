@@ -109,11 +109,8 @@ stages:
     steps:
     - checkout: self
       clean: true
+      path: s/sonic-gnmi
       displayName: 'Checkout code'
-
-    - checkout: sonic-mgmt-common
-      clean: true
-      displayName: 'Checkout sonic-mgmt-common'
 
     - template: .azure/templates/install-go.yml
       parameters:
@@ -124,6 +121,7 @@ stages:
         export PATH=$PATH:/usr/local/go/bin:$(go env GOPATH)/bin
         cd sonic-gnmi
         go mod tidy
+        git diff --exit-code -- go.mod go.sum
         make -f pure.mk junit-xml
       displayName: 'Run pure package tests'
 
