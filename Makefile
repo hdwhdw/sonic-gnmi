@@ -161,8 +161,8 @@ endif
 	patch -d $(VENDOR_DIR) -p0 < patches/gnmi_cli.all.patch
 	patch -d $(VENDOR_DIR) -p0 < patches/gnmi_set.patch
 	patch -d $(VENDOR_DIR) -p0 < patches/gnmi_get.patch
-	git apply patches/0001-Updated-to-filter-and-write-to-file.patch
-	git apply patches/0003-Fix-client-json-parsing-issue.patch
+	patch -d $(VENDOR_DIR) -p2 < patches/0001-Updated-to-filter-and-write-to-file.patch
+	patch -d $(VENDOR_DIR) -p2 < patches/0003-Fix-client-json-parsing-issue.patch
 
 # Manually adding patched client packages and their dependencies
 # to vendor/modules.txt. This satisfies 'go install -mod=vendor' lookup checks,
