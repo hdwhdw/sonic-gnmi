@@ -42,6 +42,7 @@ You can also build a debian package and install it:
 ## Streaming events
 SONiC publishes events of interest via gNMI.
 Sample events could be bgp-state change, link-state change.
+<!-- CI control run: no source or build behavior changes. -->
 A sample query URL is as below.
     `gnmi_cli -client_types=gnmi -a 127.0.0.1:50051 -t EVENTS -logtostderr -insecure -v 7 -streaming_type ON_CHANGE -q all -qt s`
 
