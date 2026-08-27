@@ -7,7 +7,7 @@ import pytest
 
 patch_file = "/tmp/gcu.patch"
 config_file = "/tmp/config_db.json.tmp"
-checkpoint_file = "/etc/sonic/config.cp.json"
+checkpoint_file = os.path.join(os.environ.get("SONIC_GNMI_CHECKPOINT_DIR", "/etc/sonic"), "config.cp.json")
 
 def create_dir(path):
     isExists = os.path.exists(path)

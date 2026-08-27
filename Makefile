@@ -1,15 +1,12 @@
-ifeq ($(GOPATH),)
-export GOPATH=/tmp/go
-endif
-export PATH := $(PATH):$(GOPATH)/bin
-
 INSTALL := /usr/bin/install
-DBDIR := /var/run/redis/sonic-db/
 GO ?= /usr/local/go/bin/go
 TOPDIR := $(abspath .)
 MGMT_COMMON_DIR := $(TOPDIR)/../sonic-mgmt-common
 BUILD_BASE := build
 BUILD_DIR := build/bin
+TOOLS_BIN_DIR := $(BUILD_BASE)/tools/bin
+TEST_RUNTIME_DIR := $(abspath $(BUILD_BASE)/test/db)
+DBDIR := $(TEST_RUNTIME_DIR)/redis/sonic-db
 BUILD_GNOI_YANG_DIR := $(BUILD_BASE)/gnoi_yang
 BUILD_GNOI_YANG_PROTO_DIR := $(BUILD_GNOI_YANG_DIR)/proto
 BUILD_GNOI_YANG_SERVER_DIR := $(BUILD_GNOI_YANG_DIR)/server
@@ -19,6 +16,9 @@ TOOLS_DIR        := $(TOPDIR)/tools
 PYANG_PLUGIN_DIR := $(TOOLS_DIR)/pyang_plugins
 PYANG  ?= pyang
 GOROOT ?= $(shell $(GO) env GOROOT)
+HOST_GOOS := $(shell $(GO) env GOHOSTOS)
+HOST_GOARCH := $(shell $(GO) env GOHOSTARCH)
+HOST_GO_ENV := GOOS=$(HOST_GOOS) GOARCH=$(HOST_GOARCH)
 FORMAT_CHECK = $(BUILD_DIR)/.formatcheck
 FORMAT_LOG = $(BUILD_DIR)/go_format.log
 # Find all .go files excluding vendor, build, and patches files
@@ -28,12 +28,16 @@ export CVL_SCHEMA_PATH := $(MGMT_COMMON_DIR)/build/cvl/schema
 API_YANGS=$(shell find $(MGMT_COMMON_DIR)/build/yang -name '*.yang' -not -path '*/sonic/*' -not -path '*/annotations/*')
 SONIC_YANGS=$(shell find $(MGMT_COMMON_DIR)/models/yang/sonic -name '*.yang')
 
-export GOBIN := $(abspath $(BUILD_DIR))
-export PATH := $(PATH):$(GOBIN):$(shell dirname $(GO))
 export CGO_LDFLAGS := -lswsscommon -lhiredis
 export CGO_CXXFLAGS := -I/usr/include/swss -w -Wall -fpermissive
 export MEMCHECK_CGO_LDFLAGS := $(CGO_LDFLAGS) -fsanitize=address
 export MEMCHECK_CGO_CXXFLAGS := $(CGO_CXXFLAGS) -fsanitize=leak
+
+GOTESTSUM := $(abspath $(TOOLS_BIN_DIR)/gotestsum-v1.13.0)
+GOCOV := $(abspath $(TOOLS_BIN_DIR)/gocov-v1.1.0)
+GOCOV_XML := $(abspath $(TOOLS_BIN_DIR)/gocov-xml-v1.2.0)
+PROTOC_GEN_GO := $(abspath $(TOOLS_BIN_DIR)/protoc-gen-go-v1.5.4)
+PROTOC_GEN_GOFAST := $(abspath $(TOOLS_BIN_DIR)/protoc-gen-gofast-v1.3.2)
 
 ifeq ($(ENABLE_TRANSLIB_WRITE),y)
 BLD_TAGS := gnmi_translib_write
@@ -49,6 +53,9 @@ endif
 # Disable function inlining so gomonkey can patch methods at runtime.
 # Required for Go 1.24+ where the compiler aggressively inlines methods.
 TEST_FLAGS := -gcflags=all=-l
+ifndef TEST_SHM_KEY
+TEST_SHM_KEY := $(shell python3 -c 'import os,time; print(((os.getpid() << 12) ^ time.time_ns()) & 0x7fffffff or 1)')
+endif
 
 MEMCHECK_TAGS := $(BLD_TAGS) gnmi_memcheck
 ifneq ($(MEMCHECK_TAGS),)
@@ -77,7 +84,9 @@ $(GO_DEPS): go.mod $(PATCHES) swsscommon_wrap $(GNOI_YANG)
 	 fi
 	$(GO) mod vendor
 	$(GO) mod download github.com/google/gnxi@v0.0.0-20181220173256-89f51f0ce1e2
-	cp -r $(GOPATH)/pkg/mod/github.com/google/gnxi@v0.0.0-20181220173256-89f51f0ce1e2/* vendor/github.com/google/gnxi/
+	gnxi_dir=$$($(GO) list -mod=mod -m -f '{{.Dir}}' github.com/google/gnxi@v0.0.0-20181220173256-89f51f0ce1e2) && \
+		cp -r "$$gnxi_dir"/* vendor/github.com/google/gnxi/ && \
+		chmod -R u+w vendor/github.com/google/gnxi
 
 # x/crypto/ssh/terminal imports x/term in v0.24.0+; gnmi_cli uses ssh/terminal
 # but go mod vendor omits both because the unpatched code doesn't import them.
@@ -86,27 +95,27 @@ $(GO_DEPS): go.mod $(PATCHES) swsscommon_wrap $(GNOI_YANG)
 # cmd packages that are not imported by any package in this module).
 	$(GO) mod download golang.org/x/term@v0.43.0
 	mkdir -p vendor/golang.org/x/crypto/ssh/terminal vendor/golang.org/x/term
-	cp $(GOPATH)/pkg/mod/golang.org/x/crypto@v0.52.0/ssh/terminal/terminal.go \
-		vendor/golang.org/x/crypto/ssh/terminal/
-	rsync -r --chmod=u+w --exclude=testdata --exclude='*_test.go' \
-		$(GOPATH)/pkg/mod/golang.org/x/term@v0.43.0/ vendor/golang.org/x/term/
+	crypto_dir=$$($(GO) list -mod=mod -m -f '{{.Dir}}' golang.org/x/crypto@v0.52.0) && \
+		cp "$$crypto_dir"/ssh/terminal/terminal.go vendor/golang.org/x/crypto/ssh/terminal/
+	term_dir=$$($(GO) list -mod=mod -m -f '{{.Dir}}' golang.org/x/term@v0.43.0) && \
+		rsync -r --chmod=u+w --exclude=testdata --exclude='*_test.go' \
+		"$$term_dir"/ vendor/golang.org/x/term/
 	python3 -c 'import re, sys; txt=open("vendor/modules.txt").read(); pkg="golang.org/x/term\n"; m=re.search(r"^(# golang\.org/x/term [^\n]+\n## explicit[^\n]*\n)", txt, re.MULTILINE) if pkg not in txt else None; sys.exit("ERROR: golang.org/x/term block not found in vendor/modules.txt") if pkg not in txt and not m else None; open("vendor/modules.txt","w").write(txt[:m.end()]+pkg+txt[m.end():]) if m else None'
 	$(GO) mod download github.com/openconfig/gnmi@v0.0.0-20200617225440-d2b4e6a45802
 	mkdir -p vendor/github.com/openconfig/gnmi/cmd/gnmi_cli \
 		vendor/github.com/openconfig/gnmi/cli \
 		vendor/github.com/openconfig/gnmi/client/flags
-	cp $(GOPATH)/pkg/mod/github.com/openconfig/gnmi@v0.0.0-20200617225440-d2b4e6a45802/cmd/gnmi_cli/gnmi_cli.go \
-		vendor/github.com/openconfig/gnmi/cmd/gnmi_cli/
-	cp $(GOPATH)/pkg/mod/github.com/openconfig/gnmi@v0.0.0-20200617225440-d2b4e6a45802/cli/cli.go \
-		vendor/github.com/openconfig/gnmi/cli/
-	cp $(GOPATH)/pkg/mod/github.com/openconfig/gnmi@v0.0.0-20200617225440-d2b4e6a45802/client/flags/intmap.go \
-		$(GOPATH)/pkg/mod/github.com/openconfig/gnmi@v0.0.0-20200617225440-d2b4e6a45802/client/flags/stringlist.go \
-		$(GOPATH)/pkg/mod/github.com/openconfig/gnmi@v0.0.0-20200617225440-d2b4e6a45802/client/flags/stringmap.go \
-		vendor/github.com/openconfig/gnmi/client/flags/
+	gnmi_dir=$$($(GO) list -mod=mod -m -f '{{.Dir}}' github.com/openconfig/gnmi@v0.0.0-20200617225440-d2b4e6a45802) && \
+		cp "$$gnmi_dir"/cmd/gnmi_cli/gnmi_cli.go vendor/github.com/openconfig/gnmi/cmd/gnmi_cli/ && \
+		cp "$$gnmi_dir"/cli/cli.go vendor/github.com/openconfig/gnmi/cli/ && \
+		cp "$$gnmi_dir"/client/flags/intmap.go \
+			"$$gnmi_dir"/client/flags/stringlist.go \
+			"$$gnmi_dir"/client/flags/stringmap.go \
+			vendor/github.com/openconfig/gnmi/client/flags/
 
 # Apply patch from sonic-mgmt-common, ignore glog.patch because glog version changed
 	sed -i 's/patch -d $${DEST_DIR}\/github.com\/golang\/glog/\#patch -d $${DEST_DIR}\/github.com\/golang\/glog/g' $(MGMT_COMMON_DIR)/patches/apply.sh
-	$(MGMT_COMMON_DIR)/patches/apply.sh vendor
+	GO="$(GO)" $(MGMT_COMMON_DIR)/patches/apply.sh vendor
 	sed -i 's/#patch -d $${DEST_DIR}\/github.com\/golang\/glog/patch -d $${DEST_DIR}\/github.com\/golang\/glog/g' $(MGMT_COMMON_DIR)/patches/apply.sh
 
 	chmod -R u+w vendor
@@ -121,29 +130,20 @@ go-deps-clean:
 	$(RM) -r vendor
 
 sonic-gnmi: $(GO_DEPS) $(FORMAT_CHECK)
+	mkdir -p $(BUILD_DIR)
 # advancetls 1.0.0 release need following patch to build by go-1.19
 	patch -d vendor -p0 < patches/0002-Fix-advance-tls-build-with-go-119.patch
 # build service first which depends on advancetls
 # add support for fsnotify closewrite event
 	patch -d vendor -p0 < patches/0004-CloseWrite-event-support.patch
-ifeq ($(CROSS_BUILD_ENVIRON),y)
-	$(GO) build -o ${GOBIN}/telemetry -mod=vendor $(BLD_FLAGS) github.com/sonic-net/sonic-gnmi/telemetry
+	$(GO) build -o $(BUILD_DIR)/telemetry -mod=vendor $(BLD_FLAGS) github.com/sonic-net/sonic-gnmi/telemetry
 ifneq ($(ENABLE_DIALOUT_VALUE),0)
-	$(GO) build -o ${GOBIN}/dialout_client_cli -mod=vendor $(BLD_FLAGS) github.com/sonic-net/sonic-gnmi/dialout/dialout_client_cli
+	$(GO) build -o $(BUILD_DIR)/dialout_client_cli -mod=vendor $(BLD_FLAGS) github.com/sonic-net/sonic-gnmi/dialout/dialout_client_cli
 endif
-	$(GO) build -o ${GOBIN}/gnoi_client -mod=vendor github.com/sonic-net/sonic-gnmi/gnoi_client
-	$(GO) build -o ${GOBIN}/gnmi_dump -mod=vendor github.com/sonic-net/sonic-gnmi/gnmi_dump
-else
-	$(GO) install -mod=vendor $(BLD_FLAGS) github.com/sonic-net/sonic-gnmi/telemetry
-ifneq ($(ENABLE_DIALOUT_VALUE),0)
-	$(GO) install -mod=vendor $(BLD_FLAGS) github.com/sonic-net/sonic-gnmi/dialout/dialout_client_cli
-endif
-	$(GO) install -mod=vendor github.com/sonic-net/sonic-gnmi/gnoi_client
-	$(GO) install -mod=vendor github.com/sonic-net/sonic-gnmi/gnmi_dump
-	$(GO) install -mod=vendor github.com/sonic-net/sonic-gnmi/build/gnoi_yang/client/gnoi_openconfig_client
-	$(GO) install -mod=vendor github.com/sonic-net/sonic-gnmi/build/gnoi_yang/client/gnoi_sonic_client
-
-endif
+	$(GO) build -o $(BUILD_DIR)/gnoi_client -mod=vendor github.com/sonic-net/sonic-gnmi/gnoi_client
+	$(GO) build -o $(BUILD_DIR)/gnmi_dump -mod=vendor github.com/sonic-net/sonic-gnmi/gnmi_dump
+	$(GO) build -o $(BUILD_DIR)/gnoi_openconfig_client -mod=vendor github.com/sonic-net/sonic-gnmi/build/gnoi_yang/client/gnoi_openconfig_client
+	$(GO) build -o $(BUILD_DIR)/gnoi_sonic_client -mod=vendor github.com/sonic-net/sonic-gnmi/build/gnoi_yang/client/gnoi_sonic_client
 
 # download and apply patch for gnmi client
 # use the already-vendored crypto (no longer need the old 2019 override;
@@ -166,22 +166,15 @@ endif
 	echo "golang.org/x/crypto/ssh/terminal" >> vendor/modules.txt
 	echo "github.com/openconfig/gnmi/cmd/gnmi_cli" >> vendor/modules.txt
 
-ifeq ($(CROSS_BUILD_ENVIRON),y)
-	$(GO) build -o ${GOBIN}/gnmi_get -mod=vendor github.com/google/gnxi/gnmi_get
-	$(GO) build -o ${GOBIN}/gnmi_set -mod=vendor github.com/google/gnxi/gnmi_set
-	$(GO) build -o ${GOBIN}/gnmi_cli -mod=vendor github.com/openconfig/gnmi/cmd/gnmi_cli
-else
-	$(GO) install -mod=vendor github.com/google/gnxi/gnmi_get
-	$(GO) install -mod=vendor github.com/google/gnxi/gnmi_set
-	$(GO) install -mod=vendor github.com/openconfig/gnmi/cmd/gnmi_cli
-endif
+	$(GO) build -o $(BUILD_DIR)/gnmi_get -mod=vendor github.com/google/gnxi/gnmi_get
+	$(GO) build -o $(BUILD_DIR)/gnmi_set -mod=vendor github.com/google/gnxi/gnmi_set
+	$(GO) build -o $(BUILD_DIR)/gnmi_cli -mod=vendor github.com/openconfig/gnmi/cmd/gnmi_cli
 
 swsscommon_wrap:
 	make -C swsscommon
 
 .SECONDEXPANSION:
 
-PROTOC_PATH := $(PATH):$(GOBIN)
 PROTOC_OPTS := -I$(CURDIR)/vendor -I/usr/local/include -I/usr/include
 PROTOC_OPTS_WITHOUT_VENDOR := -I/usr/local/include -I/usr/include
 
@@ -216,65 +209,93 @@ $(BUILD_GNOI_YANG_PROTO_DIR)/.proto_sonic_done: $(SONIC_YANGS)
 	@echo "+++++ Generation of protobuf files for SONiC Yang modules completed +++++"
 	touch $@
 
-$(GNOI_YANG): $(BUILD_GNOI_YANG_PROTO_DIR)/.proto_api_done $(BUILD_GNOI_YANG_PROTO_DIR)/.proto_sonic_done
+$(GNOI_YANG): $(BUILD_GNOI_YANG_PROTO_DIR)/.proto_api_done $(BUILD_GNOI_YANG_PROTO_DIR)/.proto_sonic_done | $(PROTOC_GEN_GOFAST)
 	@echo "+++++ Compiling PROTOBUF files; +++++"
 	# Remove the toolchain directive added by newer Go versions
 	sed -i '/^toolchain/d' go.mod
-	$(GO) install github.com/gogo/protobuf/protoc-gen-gofast
 	@mkdir -p $(@D)
-	$(foreach file, $(wildcard $(BUILD_GNOI_YANG_PROTO_DIR)/*/*.proto), PATH=$(PROTOC_PATH) protoc -I$(@D) $(PROTOC_OPTS_WITHOUT_VENDOR) --gofast_out=plugins=grpc,Mgoogle/protobuf/struct.proto=github.com/gogo/protobuf/types:$(BUILD_GNOI_YANG_PROTO_DIR) $(file);)
+	$(foreach file, $(wildcard $(BUILD_GNOI_YANG_PROTO_DIR)/*/*.proto), protoc -I$(@D) $(PROTOC_OPTS_WITHOUT_VENDOR) --plugin=protoc-gen-gofast=$(PROTOC_GEN_GOFAST) --gofast_out=plugins=grpc,Mgoogle/protobuf/struct.proto=github.com/gogo/protobuf/types:$(BUILD_GNOI_YANG_PROTO_DIR) $(file);)
 	@echo "+++++ PROTOBUF completion completed; +++++"
 	touch $@
 
-$(PROTO_GO_BINDINGS): $$(patsubst %.pb.go,%.proto,$$@) | $(GOBIN)/protoc-gen-go
-	PATH=$(PROTOC_PATH) protoc -I$(@D) $(PROTOC_OPTS) --go_out=plugins=grpc:$(@D) $<
+$(PROTO_GO_BINDINGS): $$(patsubst %.pb.go,%.proto,$$@) | $(PROTOC_GEN_GO)
+	protoc -I$(@D) $(PROTOC_OPTS) --plugin=protoc-gen-go=$(PROTOC_GEN_GO) --go_out=plugins=grpc:$(@D) $<
 
-$(GOBIN)/protoc-gen-go:
-	cd $$(mktemp -d) && \
-	$(GO) mod init protoc && \
-	$(GO) install github.com/golang/protobuf/protoc-gen-go
+$(TOOLS_BIN_DIR):
+	mkdir -p $@
+
+$(PROTOC_GEN_GOFAST): | $(TOOLS_BIN_DIR)
+	$(HOST_GO_ENV) GOBIN=$(abspath $(TOOLS_BIN_DIR)) $(GO) install github.com/gogo/protobuf/protoc-gen-gofast@v1.3.2
+	mv $(TOOLS_BIN_DIR)/protoc-gen-gofast $@
+
+$(PROTOC_GEN_GO): | $(TOOLS_BIN_DIR)
+	$(HOST_GO_ENV) GOBIN=$(abspath $(TOOLS_BIN_DIR)) $(GO) install github.com/golang/protobuf/protoc-gen-go@v1.5.4
+	mv $(TOOLS_BIN_DIR)/protoc-gen-go $@
+
+$(GOTESTSUM): | $(TOOLS_BIN_DIR)
+	$(HOST_GO_ENV) GOBIN=$(abspath $(TOOLS_BIN_DIR)) $(GO) install gotest.tools/gotestsum@v1.13.0
+	mv $(TOOLS_BIN_DIR)/gotestsum $@
+
+$(GOCOV): | $(TOOLS_BIN_DIR)
+	$(HOST_GO_ENV) GOBIN=$(abspath $(TOOLS_BIN_DIR)) $(GO) install github.com/axw/gocov/gocov@v1.1.0
+	mv $(TOOLS_BIN_DIR)/gocov $@
+
+$(GOCOV_XML): | $(TOOLS_BIN_DIR)
+	$(HOST_GO_ENV) GOBIN=$(abspath $(TOOLS_BIN_DIR)) $(GO) install github.com/AlekSi/gocov-xml@v1.2.0
+	mv $(TOOLS_BIN_DIR)/gocov-xml $@
 
 
 DBCONFG = $(DBDIR)/database_config.json
 ENVFILE = build/test/env.txt
-TESTENV = $(shell cat $(ENVFILE))
+TESTENV = env $$(cat $(ENVFILE))
+TEST_RUNTIME_ENV = DB_CONFIG_PATH=$(abspath $(DBCONFG)) \
+	SONIC_GNMI_DB_RUNTIME_DIR=$(TEST_RUNTIME_DIR) \
+	SONIC_GNMI_SHM_KEY=$(TEST_SHM_KEY)
+TEST_FIXTURE_DIRS := $(DBDIR) $(TEST_RUNTIME_DIR)/redis0/sonic-db \
+	$(TEST_RUNTIME_DIR)/redisdpu0/sonic-db
 
-$(DBCONFG): testdata/database_config.json
-	sudo mkdir -p ${DBDIR}
-	sudo cp ./testdata/database_config.json ${DBDIR}
+.PHONY: prepare-test-fixtures
+prepare-test-fixtures: testdata/database_config.json
+	@if [ -f $(ENVFILE) ]; then \
+		key=$$(sed -n 's/^SONIC_GNMI_SHM_KEY=//p' $(ENVFILE)); \
+		if [ -n "$$key" ]; then ipcrm -M "$$key" 2>/dev/null || true; fi; \
+	fi
+	$(RM) -r $(TEST_RUNTIME_DIR)
+	$(INSTALL) -d -m 0755 $(TEST_FIXTURE_DIRS)
+	$(INSTALL) -m 0644 $< $(DBCONFG)
+	ipcrm -M $(TEST_SHM_KEY) 2>/dev/null || true
 
-$(ENVFILE):
+$(ENVFILE): prepare-test-fixtures
 	mkdir -p $(@D)
-	tools/test/env.sh | grep -v DB_CONFIG_PATH | tee $@
+	tools/test/env.sh --dest=$(abspath build/test) --dbconfig=$(abspath $(DBCONFG)) > $@
+	echo SONIC_GNMI_DB_RUNTIME_DIR=$(TEST_RUNTIME_DIR) >> $@
+	echo SONIC_GNMI_SHM_KEY=$(TEST_SHM_KEY) >> $@
+	cat $@
 
-check_gotest: $(DBCONFG) $(ENVFILE)
-	sudo CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-telemetry.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/telemetry
-	sudo CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-config.txt -covermode=atomic -v github.com/sonic-net/sonic-gnmi/sonic_db_config
-	sudo CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test -race -timeout 40m $(TEST_FLAGS) -coverprofile=coverage-gnmi.txt -covermode=atomic -mod=vendor $(BLD_FLAGS) -v github.com/sonic-net/sonic-gnmi/gnmi_server -coverpkg ../...
-	sudo CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test -race -timeout 40m $(TEST_FLAGS) -coverprofile=coverage-pathz_authorizer.txt -covermode=atomic -mod=vendor $(BLD_FLAGS) -v github.com/sonic-net/sonic-gnmi/pathz_authorizer -coverpkg ../...
+.PHONY: check_gotest check_gotest-run
+check_gotest: prepare-test-fixtures $(ENVFILE) $(GOCOV) $(GOCOV_XML)
+	@trap 'ipcrm -M $(TEST_SHM_KEY) 2>/dev/null || true' EXIT; \
+		$(MAKE) --no-print-directory TEST_SHM_KEY=$(TEST_SHM_KEY) check_gotest-run
+
+check_gotest-run:
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TEST_RUNTIME_ENV) $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-telemetry.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/telemetry
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TEST_RUNTIME_ENV) $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-config.txt -covermode=atomic -v github.com/sonic-net/sonic-gnmi/sonic_db_config
+	$(MAKE) TEST_SHM_KEY=$(TEST_SHM_KEY) prepare-test-fixtures
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test -race -timeout 40m $(TEST_FLAGS) -coverprofile=coverage-gnmi.txt -covermode=atomic -mod=vendor $(BLD_FLAGS) -v github.com/sonic-net/sonic-gnmi/gnmi_server -coverpkg ../...
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test -race -timeout 40m $(TEST_FLAGS) -coverprofile=coverage-pathz_authorizer.txt -covermode=atomic -mod=vendor $(BLD_FLAGS) -v github.com/sonic-net/sonic-gnmi/pathz_authorizer -coverpkg ../...
 ifneq ($(ENABLE_DIALOUT_VALUE),0)
-	sudo CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test $(TEST_FLAGS) -coverprofile=coverage-dialout.txt -covermode=atomic -mod=vendor $(BLD_FLAGS) -v github.com/sonic-net/sonic-gnmi/dialout/dialout_client
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test $(TEST_FLAGS) -coverprofile=coverage-dialout.txt -covermode=atomic -mod=vendor $(BLD_FLAGS) -v github.com/sonic-net/sonic-gnmi/dialout/dialout_client
 endif
-	sudo CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-data.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/sonic_data_client
-	sudo CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-dbus.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/sonic_service_client
-	sudo CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-translutils.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/transl_utils
-	sudo CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-gnoi-client-system.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/gnoi_client/system
-
-	# Install required coverage tools
-	$(GO) install github.com/axw/gocov/gocov@v1.1.0
-	$(GO) install github.com/AlekSi/gocov-xml@latest
-	@GO_MOD_VER=$$(sed -n 's/^go //p' go.mod) && \
-	 GO_CUR_VER=$$($(GO) env GOVERSION | sed 's/go//') && \
-	 if printf '%s\n' "$$GO_MOD_VER" "$$GO_CUR_VER" | sort -V | head -1 | grep -qx "$$GO_MOD_VER"; then \
-	   $(GO) mod tidy; \
-	 fi
-	$(GO) mod vendor
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TEST_RUNTIME_ENV) $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-data.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/sonic_data_client
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TEST_RUNTIME_ENV) $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-dbus.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/sonic_service_client
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-translutils.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/transl_utils
+	CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) $(GO) test -race $(TEST_FLAGS) -coverprofile=coverage-gnoi-client-system.txt -covermode=atomic -mod=vendor -v github.com/sonic-net/sonic-gnmi/gnoi_client/system
 
 	# Filter out "mocks" and generated "proto" files from the coverage reports
 	for file in coverage-*.txt; do grep -v -e "/mocks/" -e "proto/" $$file > $$file.filtered; done
 
 	# Convert and generate the final coverage.xml file
-	gocov convert coverage-*.txt.filtered | gocov-xml -source $(shell pwd) > coverage.xml
+	$(GOCOV) convert coverage-*.txt.filtered | $(GOCOV_XML) -source $(shell pwd) > coverage.xml
 
 	# Cleanup temporary files
 	rm -rf coverage-*.txt coverage-*.txt.filtered
@@ -308,19 +329,26 @@ MEMLEAK_STANDARD_PKGS := \
 # MEMLEAK_GNMI_SERVER_PKG := github.com/sonic-net/sonic-gnmi/gnmi_server
 # MEMLEAK_TEST_PATTERN := ^TestGNMINative
 
-check_memleak: $(DBCONFG) $(ENVFILE)
-	sudo CGO_LDFLAGS="$(MEMCHECK_CGO_LDFLAGS)" CGO_CXXFLAGS="$(MEMCHECK_CGO_CXXFLAGS)" $(GO) test -mod=vendor $(TEST_FLAGS) $(MEMCHECK_FLAGS) -v $(MEMLEAK_STANDARD_PKGS)
+.PHONY: check_memleak check_memleak-run
+check_memleak: prepare-test-fixtures $(ENVFILE)
+	@trap 'ipcrm -M $(TEST_SHM_KEY) 2>/dev/null || true' EXIT; \
+		$(MAKE) --no-print-directory TEST_SHM_KEY=$(TEST_SHM_KEY) check_memleak-run
+
+check_memleak-run:
+	CGO_LDFLAGS="$(MEMCHECK_CGO_LDFLAGS)" CGO_CXXFLAGS="$(MEMCHECK_CGO_CXXFLAGS)" $(TEST_RUNTIME_ENV) $(GO) test -mod=vendor $(TEST_FLAGS) $(MEMCHECK_FLAGS) -v $(MEMLEAK_STANDARD_PKGS)
 	# sudo CGO_LDFLAGS="$(MEMCHECK_CGO_LDFLAGS)" CGO_CXXFLAGS="$(MEMCHECK_CGO_CXXFLAGS)" $(GO) test -mod=vendor $(MEMCHECK_FLAGS) -v $(MEMLEAK_GNMI_SERVER_PKG) -run="$(MEMLEAK_TEST_PATTERN)"
 
 # JUnit XML output for memory leak tests in Azure Pipelines
-.PHONY: check_memleak_junit
-check_memleak_junit: $(DBCONFG) $(ENVFILE)
-	@echo "Installing gotestsum for memory leak JUnit XML generation..."
-	sudo $(GO) install gotest.tools/gotestsum@v1.13.0
+.PHONY: check_memleak_junit check_memleak_junit-run
+check_memleak_junit: prepare-test-fixtures $(ENVFILE) $(GOTESTSUM)
+	@trap 'ipcrm -M $(TEST_SHM_KEY) 2>/dev/null || true' EXIT; \
+		$(MAKE) --no-print-directory TEST_SHM_KEY=$(TEST_SHM_KEY) check_memleak_junit-run
+
+check_memleak_junit-run:
 	@echo "Running memory leak tests with JUnit XML output..."
 	@mkdir -p test-results
-	CGO_LDFLAGS="$(MEMCHECK_CGO_LDFLAGS)" CGO_CXXFLAGS="$(MEMCHECK_CGO_CXXFLAGS)" \
-		sudo -E $(shell sudo $(GO) env GOPATH)/bin/gotestsum --junitfile test-results/junit-memleak-standard.xml \
+	CGO_LDFLAGS="$(MEMCHECK_CGO_LDFLAGS)" CGO_CXXFLAGS="$(MEMCHECK_CGO_CXXFLAGS)" $(TEST_RUNTIME_ENV) \
+		$(GOTESTSUM) --junitfile test-results/junit-memleak-standard.xml \
 		--format testname \
 		-- -mod=vendor $(MEMCHECK_FLAGS) -v $(MEMLEAK_STANDARD_PKGS)
 	@echo ""
@@ -339,35 +367,34 @@ check_memleak_junit: $(DBCONFG) $(ENVFILE)
 
 
 # JUnit XML output for integration tests in Azure Pipelines
-.PHONY: check_gotest_junit
-check_gotest_junit: $(DBCONFG) $(ENVFILE)
-	@echo "Installing gotestsum for integration test JUnit XML generation..."
-	sudo $(GO) install gotest.tools/gotestsum@v1.13.0
+.PHONY: check_gotest_junit check_gotest_junit-run
+check_gotest_junit: prepare-test-fixtures $(ENVFILE) $(GOTESTSUM) $(GOCOV) $(GOCOV_XML)
+	@trap 'ipcrm -M $(TEST_SHM_KEY) 2>/dev/null || true' EXIT; \
+		$(MAKE) --no-print-directory TEST_SHM_KEY=$(TEST_SHM_KEY) check_gotest_junit-run
+
+check_gotest_junit-run:
 	@echo "Running integration tests with JUnit XML output..."
 	@mkdir -p test-results
-	
-	# TODO: Fix tests to not depend on /etc/sonic existing
-	# Creating directory here as workaround for poorly written tests
-	sudo mkdir -p /etc/sonic && sudo chmod 777 /etc/sonic
 	
 	# Run basic packages (no special environment needed)
 	@if [ -n "$(INTEGRATION_BASIC_PKGS)" ]; then \
 		echo "Running basic integration tests..."; \
-		CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" \
-			sudo -E $(shell sudo $(GO) env GOPATH)/bin/gotestsum --junitfile test-results/junit-integration-basic.xml \
+		CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TEST_RUNTIME_ENV) \
+			$(GOTESTSUM) --junitfile test-results/junit-integration-basic.xml \
 			--format testname \
-			-- -race -timeout 40m $(TEST_FLAGS) -coverprofile=test-results/coverage-integration-basic.txt \
+			-- -p=1 -race -timeout 40m $(TEST_FLAGS) -coverprofile=test-results/coverage-integration-basic.txt \
 			-covermode=atomic -mod=vendor -v $(INTEGRATION_BASIC_PKGS); \
 	fi
 	
 	# Run packages needing special environment
-	@if [ -n "$(INTEGRATION_ENV_PKGS)" ]; then \
+	@set -e; if [ -n "$(INTEGRATION_ENV_PKGS)" ]; then \
+		$(MAKE) --no-print-directory TEST_SHM_KEY=$(TEST_SHM_KEY) prepare-test-fixtures; \
 		echo "Pre-checking env packages compile..."; \
 		CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) \
-			sudo -E $(GO) test -run=^$$ -mod=vendor $(BLD_FLAGS) $(INTEGRATION_ENV_PKGS) 2>&1 || true; \
+			$(GO) test -run=^$$ -mod=vendor $(BLD_FLAGS) $(INTEGRATION_ENV_PKGS) 2>&1 || true; \
 		echo "Running environment-dependent integration tests..."; \
 		CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) \
-			sudo -E $(shell sudo $(GO) env GOPATH)/bin/gotestsum --junitfile test-results/junit-integration-env.xml \
+			$(GOTESTSUM) --junitfile test-results/junit-integration-env.xml \
 			--format testname \
 			-- -race -timeout 40m $(TEST_FLAGS) -coverprofile=test-results/coverage-integration-env.txt \
 			-covermode=atomic -mod=vendor $(BLD_FLAGS) -v $(INTEGRATION_ENV_PKGS); \
@@ -378,7 +405,7 @@ ifneq ($(ENABLE_DIALOUT_VALUE),0)
 	@if [ -n "$(INTEGRATION_DIALOUT_PKG)" ]; then \
 		echo "Running dialout integration tests..."; \
 		CGO_LDFLAGS="$(CGO_LDFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" $(TESTENV) \
-			sudo -E $(shell sudo $(GO) env GOPATH)/bin/gotestsum --junitfile test-results/junit-integration-dialout.xml \
+			$(GOTESTSUM) --junitfile test-results/junit-integration-dialout.xml \
 			--format testname \
 			-- $(TEST_FLAGS) -coverprofile=test-results/coverage-integration-dialout.txt \
 			-covermode=atomic -mod=vendor $(BLD_FLAGS) -v $(INTEGRATION_DIALOUT_PKG); \
@@ -386,23 +413,13 @@ ifneq ($(ENABLE_DIALOUT_VALUE),0)
 endif
 
 	# Generate Cobertura XML coverage report for Azure Pipelines
-	@echo "Installing coverage tools..."
-	$(GO) install github.com/axw/gocov/gocov@v1.1.0
-	$(GO) install github.com/AlekSi/gocov-xml@latest
-	@GO_MOD_VER=$$(sed -n 's/^go //p' go.mod) && \
-	 GO_CUR_VER=$$($(GO) env GOVERSION | sed 's/go//') && \
-	 if printf '%s\n' "$$GO_MOD_VER" "$$GO_CUR_VER" | sort -V | head -1 | grep -qx "$$GO_MOD_VER"; then \
-	   $(GO) mod tidy; \
-	 fi
-	$(GO) mod vendor
-
 	@echo "Generating coverage.xml..."
 	@for file in test-results/coverage-*.txt; do \
 		if [ -f "$$file" ]; then \
 			grep -v -e "/mocks/" -e "proto/" "$$file" > "$$file.filtered" 2>/dev/null || true; \
 		fi; \
 	done
-	gocov convert test-results/coverage-*.txt.filtered | gocov-xml -source $(shell pwd) > coverage.xml
+	$(GOCOV) convert test-results/coverage-*.txt.filtered | $(GOCOV_XML) -source $(shell pwd) > coverage.xml
 	@rm -f test-results/coverage-*.txt.filtered
 
 	@echo ""
@@ -429,8 +446,15 @@ endif
 
 
 clean:
+	@if [ -f $(ENVFILE) ]; then \
+		key=$$(sed -n 's/^SONIC_GNMI_SHM_KEY=//p' $(ENVFILE)); \
+		if [ -n "$$key" ]; then ipcrm -M "$$key" 2>/dev/null || true; fi; \
+	fi
 	$(RM) -r build
 	$(RM) -r vendor
+	$(RM) -r test-results
+	$(RM) coverage.xml coverage-*.txt coverage-*.txt.filtered
+	$(MAKE) -C swsscommon clean
 
 # File target that generates a diff file if formatting is incorrect
 $(FORMAT_CHECK): $(GO_FILES)
@@ -448,18 +472,16 @@ $(FORMAT_CHECK): $(GO_FILES)
 	fi
 	touch $@
 
-install:
-	$(INSTALL) -D $(BUILD_DIR)/telemetry $(DESTDIR)/usr/sbin/telemetry
+PRODUCT_BINARIES := telemetry gnmi_get gnmi_set gnmi_cli gnoi_client \
+	gnoi_openconfig_client gnoi_sonic_client gnmi_dump
 ifneq ($(ENABLE_DIALOUT_VALUE),0)
-	$(INSTALL) -D $(BUILD_DIR)/dialout_client_cli $(DESTDIR)/usr/sbin/dialout_client_cli
+PRODUCT_BINARIES += dialout_client_cli
 endif
-	$(INSTALL) -D $(BUILD_DIR)/gnmi_get $(DESTDIR)/usr/sbin/gnmi_get
-	$(INSTALL) -D $(BUILD_DIR)/gnmi_set $(DESTDIR)/usr/sbin/gnmi_set
-	$(INSTALL) -D $(BUILD_DIR)/gnmi_cli $(DESTDIR)/usr/sbin/gnmi_cli
-	$(INSTALL) -D $(BUILD_DIR)/gnoi_client $(DESTDIR)/usr/sbin/gnoi_client
-	$(INSTALL) -D $(BUILD_DIR)/gnoi_openconfig_client $(DESTDIR)/usr/sbin/gnoi_openconfig_client
-	$(INSTALL) -D $(BUILD_DIR)/gnoi_sonic_client $(DESTDIR)/usr/sbin/gnoi_sonic_client
-	$(INSTALL) -D $(BUILD_DIR)/gnmi_dump $(DESTDIR)/usr/sbin/gnmi_dump
+
+install:
+	@set -e; for binary in $(PRODUCT_BINARIES); do \
+		$(INSTALL) -D $(BUILD_DIR)/$$binary $(DESTDIR)/usr/sbin/$$binary; \
+	done
 
 
 deinstall:

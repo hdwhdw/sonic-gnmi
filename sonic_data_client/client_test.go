@@ -2239,6 +2239,13 @@ func TestMixedDbClientGet(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	checkpointDir, err := os.MkdirTemp("", "sonic-checkpoint-")
+	if err != nil {
+		panic(err)
+	}
+	testFile = filepath.Join(checkpointDir, "ut.cp.json")
+	os.Setenv("SONIC_GNMI_CHECKPOINT_DIR", checkpointDir)
+	defer os.RemoveAll(checkpointDir)
 	defer test_utils.MemLeakCheck()
 	m.Run()
 }

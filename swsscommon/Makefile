@@ -18,4 +18,4 @@ all:
 	$(SWIG) $(SWIG_FLAG) -I/usr/include/swss/ swsscommon.i
 
 clean:
-	$(RM) *.go *.cxx *.i
+	$(RM) swsscommon.go swsscommon_wrap.cxx swsscommon_wrap.h swsscommon.i

@@ -24,13 +24,13 @@ import (
 )
 
 const (
-	// Pathz is a location of the Pathz Policy
-	pathzTestPolicyFile = "../testdata/gnsi/pathz_policy.pb.txt"
-	pathzTestMetaFile   = "../testdata/gnsi/pathz-version.json"
-	port                = 8081
+	port = 8081
 )
 
 var (
+	// Pathz is a location of the Pathz Policy
+	pathzTestPolicyFile string
+	pathzTestMetaFile   string
 	TestPathzPolicyFile string // Global variable to hold policy path
 	TestPathzMetaFile   string // Global variable to hold meta path
 )

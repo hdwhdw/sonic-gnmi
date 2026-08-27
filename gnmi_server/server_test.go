@@ -6870,7 +6870,7 @@ func TestConfigDbJournal(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.desc, func(t *testing.T) {
 			// Clear the DbJournal file
-			err := os.Remove(HostVarLogPath + "/config_db.txt")
+			err := os.Remove(hostVarLogPath + "/config_db.txt")
 			if err != nil {
 				t.Fatalf("Failed to remove journal file: %v", err)
 			}
@@ -6881,7 +6881,7 @@ func TestConfigDbJournal(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Verify the contents of the file
-			file, err := os.Open(HostVarLogPath + "/config_db.txt")
+			file, err := os.Open(hostVarLogPath + "/config_db.txt")
 			if err != nil {
 				t.Fatalf("Failed to open file: %v", err)
 			}
@@ -6908,6 +6908,34 @@ func init() {
 }
 
 func TestMain(m *testing.M) {
+	journalDir, err := os.MkdirTemp("", "gnmi-journal-")
+	if err != nil {
+		panic(err)
+	}
+	hostVarLogPath = journalDir
+	defer os.RemoveAll(journalDir)
+	healthzDir, err := os.MkdirTemp("", "gnmi-healthz-")
+	if err != nil {
+		panic(err)
+	}
+	healthzHostRoot = healthzDir
+	defer os.RemoveAll(healthzDir)
+	pathzDir, err := os.MkdirTemp("", "gnmi-pathz-")
+	if err != nil {
+		panic(err)
+	}
+	pathzTestPolicyFile = filepath.Join(pathzDir, "pathz_policy.pb.txt")
+	pathzTestMetaFile = filepath.Join(pathzDir, "pathz-version.json")
+	if err := os.WriteFile(pathzTestPolicyFile, []byte(pathzTestPolicyPermit), 0644); err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(pathzDir)
+	checkpointDir, err := os.MkdirTemp("", "gnmi-checkpoint-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("SONIC_GNMI_CHECKPOINT_DIR", checkpointDir)
+	defer os.RemoveAll(checkpointDir)
 	defer test_utils.MemLeakCheck()
 	m.Run()
 }
