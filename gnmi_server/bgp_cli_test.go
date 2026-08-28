@@ -5,33 +5,61 @@ package gnmi
 import (
 	"crypto/tls"
 	"encoding/json"
+	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/agiledragon/gomonkey/v2"
 	pb "github.com/openconfig/gnmi/proto/gnmi"
+	testcert "github.com/sonic-net/sonic-gnmi/testdata/tls"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 func TestGetBGPRunningConfig(t *testing.T) {
-	s := createServer(t, ServerPort)
+	socketPath := filepath.Join(t.TempDir(), "gnmi.sock")
+	certificate, err := testcert.NewCert()
+	if err != nil {
+		t.Fatalf("Loading server certificate failed: %v", err)
+	}
+	tlsConfig := &tls.Config{
+		ClientAuth:   tls.RequestClientCert,
+		Certificates: []tls.Certificate{certificate},
+	}
+	s, err := NewServer(&Config{
+		Port:                ServerPort,
+		UnixSocket:          socketPath,
+		EnableTranslibWrite: true,
+		EnableNativeWrite:   true,
+		Threshold:           100,
+		ImgDir:              "/tmp",
+	}, []grpc.ServerOption{grpc.Creds(credentials.NewTLS(tlsConfig))}, nil)
+	if err != nil {
+		t.Fatalf("Creating server failed: %v", err)
+	}
 	go runServer(t, s)
 	defer s.ForceStop()
 
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))}
-
-	conn, err := grpc.Dial(TargetAddr, opts...)
+	clientTLSConfig := &tls.Config{InsecureSkipVerify: true}
+	tcpConn, err := grpc.Dial(TargetAddr, grpc.WithTransportCredentials(credentials.NewTLS(clientTLSConfig)))
 	if err != nil {
 		t.Fatalf("Dialing to %q failed: %v", TargetAddr, err)
 	}
-	defer conn.Close()
+	defer tcpConn.Close()
 
-	gClient := pb.NewGNMIClient(conn)
+	udsConn, err := grpc.Dial("unix://"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("Dialing to %q failed: %v", socketPath, err)
+	}
+	defer udsConn.Close()
+
 	ctx, cancel := context.WithTimeout(context.Background(), QueryTimeout*time.Second)
 	defer cancel()
 
@@ -47,17 +75,25 @@ func TestGetBGPRunningConfig(t *testing.T) {
 
 	tests := []struct {
 		desc           string
+		client         pb.GNMIClient
 		wantRetCode    codes.Code
 		wantRespVal    interface{}
 		valTest        bool
 		mockOutputFile string
 	}{
 		{
+			desc:        "deny SHOW bgp running-config over TCP",
+			client:      pb.NewGNMIClient(tcpConn),
+			wantRetCode: codes.PermissionDenied,
+		},
+		{
 			desc:        "query SHOW bgp running-config read error",
+			client:      pb.NewGNMIClient(udsConn),
 			wantRetCode: codes.NotFound,
 		},
 		{
 			desc:           "query SHOW bgp running-config",
+			client:         pb.NewGNMIClient(udsConn),
 			wantRetCode:    codes.OK,
 			wantRespVal:    wantRunningConfig,
 			valTest:        true,
@@ -76,10 +112,100 @@ func TestGetBGPRunningConfig(t *testing.T) {
 		}
 
 		t.Run(test.desc, func(t *testing.T) {
-			runTestGet(t, ctx, gClient, "SHOW", textPbPath, test.wantRetCode, test.wantRespVal, test.valTest)
+			runTestGet(t, ctx, test.client, "SHOW", textPbPath, test.wantRetCode, test.wantRespVal, test.valTest)
 		})
 		if patches != nil {
 			patches.Reset()
 		}
+	}
+}
+
+func TestContainsBGPRunningConfigPath(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix *pb.Path
+		paths  []*pb.Path
+		want   bool
+	}{
+		{
+			name:   "elem path",
+			prefix: &pb.Path{Target: "SHOW"},
+			paths:  []*pb.Path{{Elem: []*pb.PathElem{{Name: "bgp"}, {Name: "running-config"}}}},
+			want:   true,
+		},
+		{
+			name:   "split prefix",
+			prefix: &pb.Path{Target: "SHOW", Elem: []*pb.PathElem{{Name: "bgp"}}},
+			paths:  []*pb.Path{{Elem: []*pb.PathElem{{Name: "running-config"}}}},
+			want:   true,
+		},
+		{
+			name:   "deprecated prefix does not bypass elem path",
+			prefix: &pb.Path{Target: "SHOW", Element: []string{"ignored"}},
+			paths:  []*pb.Path{{Elem: []*pb.PathElem{{Name: "bgp"}, {Name: "running-config"}}}},
+			want:   true,
+		},
+		{
+			name:   "deprecated element path is not routed by SHOW client",
+			prefix: &pb.Path{Target: "SHOW"},
+			paths:  []*pb.Path{{Element: []string{"bgp", "running-config"}}},
+		},
+		{
+			name:   "other SHOW path",
+			prefix: &pb.Path{Target: "SHOW"},
+			paths:  []*pb.Path{{Elem: []*pb.PathElem{{Name: "ipv6"}, {Name: "bgp"}, {Name: "summary"}}}},
+		},
+		{
+			name:   "other target",
+			prefix: &pb.Path{Target: "CONFIG_DB"},
+			paths:  []*pb.Path{{Elem: []*pb.PathElem{{Name: "bgp"}, {Name: "running-config"}}}},
+		},
+		{
+			name:   "sensitive path after benign path",
+			prefix: &pb.Path{Target: "SHOW"},
+			paths: []*pb.Path{
+				{Elem: []*pb.PathElem{{Name: "clock"}}},
+				{Elem: []*pb.PathElem{{Name: "bgp"}, {Name: "running-config"}}},
+			},
+			want: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := containsBGPRunningConfigPath(test.prefix, test.paths); got != test.want {
+				t.Fatalf("containsBGPRunningConfigPath() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestGetBGPRunningConfigMixedPathEncodingDeniedOverTCP(t *testing.T) {
+	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}})
+	s := &Server{config: &Config{}}
+	_, err := s.Get(ctx, &pb.GetRequest{
+		Prefix: &pb.Path{Target: "SHOW", Element: []string{"ignored"}},
+		Path: []*pb.Path{{
+			Elem: []*pb.PathElem{{Name: "bgp"}, {Name: "running-config"}},
+		}},
+		Encoding: pb.Encoding_JSON_IETF,
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("Get() code = %v, want PermissionDenied; err=%v", status.Code(err), err)
+	}
+}
+
+func TestGetBGPRunningConfigAuthenticationPrecedesTCPDenial(t *testing.T) {
+	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}})
+	s := &Server{config: &Config{UserAuth: AuthTypes{"cert": true}}}
+	_, err := s.Get(ctx, &pb.GetRequest{
+		Prefix: &pb.Path{Target: "SHOW"},
+		Path: []*pb.Path{{
+			Elem: []*pb.PathElem{{Name: "bgp"}, {Name: "running-config"}},
+		}},
+		Encoding: pb.Encoding_JSON_IETF,
+	})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("Get() code = %v, want Unauthenticated; err=%v", status.Code(err), err)
 	}
 }
