@@ -31,6 +31,9 @@ type dbConfigInclude struct {
 
 func writeGlobalConfig(include dbConfigInclude) error {
 	globalDir := filepath.Dir(dbConfigPath())
+	if err := os.MkdirAll(globalDir, 0755); err != nil {
+		return err
+	}
 	baseInclude := filepath.Base(dbConfigPath())
 	otherInclude, err := filepath.Rel(globalDir, include.Include)
 	if err != nil {
