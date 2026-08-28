@@ -190,10 +190,11 @@ func (val Value) GetTimestamp() int64 {
 }
 
 type DbClient struct {
-	prefix  *gnmipb.Path
-	pathG2S map[*gnmipb.Path][]tablePath
-	q       *queue.PriorityQueue
-	channel chan struct{}
+	prefix                 *gnmipb.Path
+	pathG2S                map[*gnmipb.Path][]tablePath
+	preserveConfigDBTables bool
+	q                      *queue.PriorityQueue
+	channel                chan struct{}
 
 	synced sync.WaitGroup  // Control when to send gNMI sync_response
 	w      *sync.WaitGroup // wait for all sub go routines to finish
@@ -205,6 +206,15 @@ type DbClient struct {
 }
 
 func NewDbClient(paths []*gnmipb.Path, prefix *gnmipb.Path) (Client, error) {
+	return newDbClient(paths, prefix, false)
+}
+
+// NewDbClientForGet creates a DbClient with unary Get response semantics.
+func NewDbClientForGet(paths []*gnmipb.Path, prefix *gnmipb.Path) (Client, error) {
+	return newDbClient(paths, prefix, true)
+}
+
+func newDbClient(paths []*gnmipb.Path, prefix *gnmipb.Path, preserveConfigDBTables bool) (Client, error) {
 	var client DbClient
 	var err error
 
@@ -220,6 +230,7 @@ func NewDbClient(paths []*gnmipb.Path, prefix *gnmipb.Path) (Client, error) {
 
 	client.prefix = prefix
 	client.pathG2S = make(map[*gnmipb.Path][]tablePath)
+	client.preserveConfigDBTables = preserveConfigDBTables
 	err = populateAllDbtablePath(prefix, paths, &client.pathG2S)
 
 	if err != nil {
@@ -450,7 +461,13 @@ func (c *DbClient) Get(w *sync.WaitGroup) ([]*spb.Value, error) {
 	var values []*spb.Value
 	ts := time.Now()
 	for gnmiPath, tblPaths := range c.pathG2S {
-		val, err := tableData2TypedValue(tblPaths, nil)
+		var val *gnmipb.TypedValue
+		var err error
+		if c.preserveConfigDBTables && isConfigDBWildcard(tblPaths) {
+			val, err = configDBTables2TypedValue(&tblPaths[0])
+		} else {
+			val, err = tableData2TypedValue(tblPaths, nil)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1118,6 +1135,63 @@ func tableData2TypedValue(tblPaths []tablePath, op *string) (*gnmipb.TypedValue,
 		}
 	}
 	return Msi2TypedValue(msi)
+}
+
+func isConfigDBWildcard(tblPaths []tablePath) bool {
+	return len(tblPaths) == 1 && tblPaths[0].dbName == "CONFIG_DB" &&
+		tblPaths[0].tableName == "*" && tblPaths[0].tableKey == ""
+}
+
+func configDBTables2TypedValue(tblPath *tablePath) (*gnmipb.TypedValue, error) {
+	msi := make(map[string]interface{})
+	if err := configDBTables2Msi(tblPath, &msi); err != nil {
+		return nil, err
+	}
+	return Msi2TypedValue(msi)
+}
+
+func configDBTables2Msi(tblPath *tablePath, msi *map[string]interface{}) error {
+	redisDb := Target2RedisDb[tblPath.dbNamespace][tblPath.dbName]
+	pattern := "*" + tblPath.delimitor + "*"
+	dbkeys, err := redisDb.Keys(context.Background(), pattern).Result()
+	if err != nil {
+		return fmt.Errorf("redis Keys failed for %v, pattern %s %v", tblPath, pattern, err)
+	}
+	for _, dbkey := range dbkeys {
+		fields, err := redisDb.HGetAll(context.Background(), dbkey).Result()
+		if err != nil {
+			return fmt.Errorf("redis HGetAll failed for %v, dbkey %s: %v", tblPath, dbkey, err)
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		parts := strings.SplitN(dbkey, tblPath.delimitor, 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("dbkey: %s, failed split from delimitor %v", dbkey, tblPath.delimitor)
+		}
+		table, ok := (*msi)[parts[0]].(map[string]interface{})
+		if !ok {
+			table = make(map[string]interface{})
+			(*msi)[parts[0]] = table
+		}
+		table[parts[1]] = configDBFieldValues(fields)
+	}
+	return nil
+}
+
+func configDBFieldValues(fields map[string]string) map[string]interface{} {
+	values := make(map[string]interface{})
+	for field, value := range fields {
+		if field == "NULL" {
+			continue
+		}
+		if strings.HasSuffix(field, "@") {
+			values[strings.TrimSuffix(field, "@")] = strings.Split(value, ",")
+		} else {
+			values[field] = value
+		}
+	}
+	return values
 }
 
 // subscribeTableData2TypedValue is used by Poll and Sample subscribe modes.
