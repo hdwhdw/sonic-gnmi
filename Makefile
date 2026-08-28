@@ -18,8 +18,9 @@ GOROOT ?= $(shell $(GO) env GOROOT)
 HOST_GOOS = $(shell $(GO) env GOHOSTOS)
 HOST_GOARCH = $(shell $(GO) env GOHOSTARCH)
 HOST_GO_ENV = GOOS=$(HOST_GOOS) GOARCH=$(HOST_GOARCH)
-SUDO_GO := sudo -E env -u GOPATH -u GOMODCACHE -u GOCACHE -u GOCACHEPROG -u GOENV \
-	-u GOTMPDIR -u XDG_CACHE_HOME -u XDG_CONFIG_HOME HOME=/root
+GO_BIN_DIR = $(dir $(shell command -v $(GO)))
+SUDO_GO := sudo -H env -i HOME=/root USER=root LOGNAME=root \
+	PATH=$(GO_BIN_DIR):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 FORMAT_CHECK = $(BUILD_DIR)/.formatcheck
 FORMAT_LOG = $(BUILD_DIR)/go_format.log
 # Find all .go files excluding vendor, build, and patches files
