@@ -26,7 +26,7 @@ func TestNew(t *testing.T) {
 		return []net.Addr{
 			testAddr("127.0.0.1/8"),
 			testAddr("169.254.200.1/24"),
-			testAddr("10.0.0.2/24"),
+			&net.IPAddr{IP: net.ParseIP("10.0.0.2")},
 			testAddr("10.0.0.2/24"),
 		}, nil
 	}

@@ -30,8 +30,16 @@ func New(now time.Time) (tls.Certificate, error) {
 	ipAddresses := make([]net.IP, 0, len(addrs))
 	seen := map[string]bool{}
 	for _, addr := range addrs {
-		ip, _, err := net.ParseCIDR(addr.String())
-		if err != nil || ip.IsLoopback() || ip.IsUnspecified() {
+		var ip net.IP
+		switch addr := addr.(type) {
+		case *net.IPNet:
+			ip = addr.IP
+		case *net.IPAddr:
+			ip = addr.IP
+		default:
+			ip, _, _ = net.ParseCIDR(addr.String())
+		}
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
 			continue
 		}
 		key := ip.String()
