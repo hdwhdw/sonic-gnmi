@@ -26,7 +26,7 @@ const (
 	QueryTimeout = 10
 )
 
-func MockNSEnterBGPSummary(t *testing.T, fileName string) *gomonkey.Patches {
+func MockNSEnterCommand(t *testing.T, fileName string) *gomonkey.Patches {
 	fileContentBytes, err := ioutil.ReadFile(fileName)
 	if err != nil {
 		t.Fatalf("read file %v err: %v", fileName, err)
