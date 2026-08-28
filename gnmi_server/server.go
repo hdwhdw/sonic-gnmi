@@ -1020,7 +1020,7 @@ func (s *Server) Get(ctx context.Context, req *gnmipb.GetRequest) (*gnmipb.GetRe
 		dc, err = sdc.NewShowClient(paths, prefix)
 		authTarget = "gnmi_show"
 	} else if targetDbName, ok, _, _ := sdc.IsTargetDb(target); ok {
-		dc, err = sdc.NewDbClient(paths, prefix)
+		dc, err = sdc.NewDbClientForGet(paths, prefix)
 		if err == nil {
 			// For Get requests, validate that all requested keys exist in Redis.
 			// NewDbClient allows non-existent paths (needed for Subscribe to monitor
