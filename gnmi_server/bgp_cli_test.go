@@ -5,6 +5,7 @@ package gnmi
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -80,6 +81,7 @@ func TestGetBGPRunningConfig(t *testing.T) {
 		wantRespVal    interface{}
 		valTest        bool
 		mockOutputFile string
+		mockError      error
 	}{
 		{
 			desc:        "deny SHOW bgp running-config over TCP",
@@ -90,6 +92,7 @@ func TestGetBGPRunningConfig(t *testing.T) {
 			desc:        "query SHOW bgp running-config read error",
 			client:      pb.NewGNMIClient(udsConn),
 			wantRetCode: codes.NotFound,
+			mockError:   errors.New("vtysh failed"),
 		},
 		{
 			desc:           "query SHOW bgp running-config",
@@ -109,6 +112,8 @@ func TestGetBGPRunningConfig(t *testing.T) {
 		var patches *gomonkey.Patches
 		if test.mockOutputFile != "" {
 			patches = MockNSEnterCommand(t, test.mockOutputFile)
+		} else if test.mockError != nil {
+			patches = MockNSEnterCommandError(test.mockError)
 		}
 
 		t.Run(test.desc, func(t *testing.T) {
@@ -127,6 +132,10 @@ func TestContainsBGPRunningConfigPath(t *testing.T) {
 		paths  []*pb.Path
 		want   bool
 	}{
+		{
+			name:  "nil prefix",
+			paths: []*pb.Path{{Elem: []*pb.PathElem{{Name: "bgp"}, {Name: "running-config"}}}},
+		},
 		{
 			name:   "elem path",
 			prefix: &pb.Path{Target: "SHOW"},

@@ -40,6 +40,16 @@ func MockNSEnterCommand(t *testing.T, fileName string) *gomonkey.Patches {
 	return patches
 }
 
+func MockNSEnterCommandError(commandErr error) *gomonkey.Patches {
+	patches := gomonkey.ApplyFunc(exec.Command, func(name string, args ...string) *exec.Cmd {
+		return &exec.Cmd{}
+	})
+	patches.ApplyMethod(reflect.TypeOf(&exec.Cmd{}), "CombinedOutput", func(_ *exec.Cmd) ([]byte, error) {
+		return nil, commandErr
+	})
+	return patches
+}
+
 func MockReadFile(fileName string, fileContent string, fileReadErr error) {
 	sdc.ImplIoutilReadFile = func(filePath string) ([]byte, error) {
 		if filePath == fileName {

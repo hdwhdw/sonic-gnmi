@@ -883,7 +883,7 @@ func isUnixPeer(ctx context.Context) bool {
 }
 
 func containsBGPRunningConfigPath(prefix *gnmipb.Path, paths []*gnmipb.Path) bool {
-	if prefix.GetTarget() != "SHOW" {
+	if prefix == nil || prefix.GetTarget() != "SHOW" {
 		return false
 	}
 	for _, path := range paths {

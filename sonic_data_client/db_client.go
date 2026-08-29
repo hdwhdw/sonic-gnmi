@@ -479,7 +479,7 @@ func (c *DbClient) Get(w *sync.WaitGroup) ([]*spb.Value, error) {
 			Val:       val,
 		})
 	}
-	log.V(6).Infof("Getting #%v", values)
+	log.V(6).Infof("Get returned %d database value(s)", len(values))
 	log.V(4).Infof("Get done, total time taken: %v ms", int64(time.Since(ts)/time.Millisecond))
 	return values, nil
 }
@@ -989,7 +989,7 @@ func emitJSON(v *map[string]interface{}) ([]byte, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.V(2).Infof("Recovered from panic: %v", r)
-			log.V(2).Infof("Current state of map to be serialized is: %v", *v)
+			log.V(2).Infof("Map to be serialized contains %d entries", len(*v))
 		}
 	}()
 	j, err := json.Marshal(*v)
@@ -1030,12 +1030,12 @@ func TableData2Msi(tblPath *tablePath, useKey bool, op *string, msi *map[string]
 		dbkeys = []string{tblPath.tableName + tblPath.delimitor + tblPath.tableKey}
 	}
 
-	log.V(4).Infof("dbkeys to be pulled from redis %v", dbkeys)
+	log.V(4).Infof("Pulling %d key(s) from Redis", len(dbkeys))
 
 	// Asked to use jsonField and jsonTableKey in the final json value
 	if tblPath.jsonField != "" && tblPath.jsonTableKey != "" {
 		val, err := redisDb.HGet(context.Background(), dbkeys[0], tblPath.field).Result()
-		log.V(4).Infof("Data pulled for key %s and field %s: %s", dbkeys[0], tblPath.field, val)
+		log.V(4).Infof("Data pulled for key %s and field %s", dbkeys[0], tblPath.field)
 		if err != nil {
 			log.V(3).Infof("redis HGet failed for %v %v", tblPath, err)
 			// ignore non-existing field which was derived from virtual path
@@ -1043,7 +1043,7 @@ func TableData2Msi(tblPath *tablePath, useKey bool, op *string, msi *map[string]
 		}
 		fv = map[string]string{tblPath.jsonField: val}
 		makeJSON_redis(msi, &tblPath.jsonTableKey, op, fv)
-		log.V(6).Infof("Added json key %v fv %v ", tblPath.jsonTableKey, fv)
+		log.V(6).Infof("Added JSON key %v with %d field(s)", tblPath.jsonTableKey, len(fv))
 		return nil
 	}
 
@@ -1053,7 +1053,7 @@ func TableData2Msi(tblPath *tablePath, useKey bool, op *string, msi *map[string]
 			log.V(2).Infof("redis HGetAll failed for  %v, dbkey %s", tblPath, dbkey)
 			return err
 		}
-		log.V(4).Infof("Data pulled for dbkey %s: %v", dbkey, fv)
+		log.V(4).Infof("Data pulled for dbkey %s with %d field(s)", dbkey, len(fv))
 
 		if len(fv) == 0 {
 			log.V(6).Infof("No data for dbkey %s, skipping", dbkey)
@@ -1069,26 +1069,26 @@ func TableData2Msi(tblPath *tablePath, useKey bool, op *string, msi *map[string]
 			// Split dbkey string into two parts and second part is key in table
 			keys := strings.SplitN(dbkey, tblPath.delimitor, 2)
 			if len(keys) < 2 {
-				return fmt.Errorf("dbkey: %s, failed split from delimitor %v", dbkey, tblPath.delimitor)
+				return fmt.Errorf("dbkey: %s, failed split from delimiter %v", dbkey, tblPath.delimitor)
 			}
 			key = keys[1]
 			err = makeJSON_redis(msi, &key, op, fv)
 		}
 		if err != nil {
-			log.V(2).Infof("makeJSON err %s for fv %v", err, fv)
+			log.V(2).Infof("makeJSON failed for dbkey %s: %v", dbkey, err)
 			return err
 		}
-		log.V(6).Infof("Added idex %v fv %v ", idx, fv)
+		log.V(6).Infof("Added Redis result %d with %d field(s)", idx, len(fv))
 	}
 	return nil
 }
 
 func Msi2TypedValue(msi map[string]interface{}) (*gnmipb.TypedValue, error) {
-	log.V(4).Infof("State of map after adding redis data %v", msi)
+	log.V(4).Infof("Marshaling map with %d Redis data entries", len(msi))
 	jv, err := emitJSON(&msi)
 	if err != nil {
-		log.V(2).Infof("emitJSON err %s for  %v", err, msi)
-		return nil, fmt.Errorf("emitJSON err %s for  %v", err, msi)
+		log.V(2).Infof("emitJSON failed for map with %d entries: %v", len(msi), err)
+		return nil, fmt.Errorf("emitJSON failed: %v", err)
 	}
 	if jv == nil { // json and err is nil because panic potentially happened
 		return nil, fmt.Errorf("emitJSON failed to grab json value of map due to potential panic")
@@ -1122,7 +1122,7 @@ func tableData2TypedValue(tblPaths []tablePath, op *string) (*gnmipb.TypedValue,
 				if err != nil {
 					return nil, err
 				}
-				log.V(4).Infof("Data pulled for key %s and field %s: %s", key, tblPath.field, val)
+				log.V(4).Infof("Data pulled for key %s and field %s", key, tblPath.field)
 				return &gnmipb.TypedValue{
 					Value: &gnmipb.TypedValue_StringVal{
 						StringVal: val,
@@ -1167,7 +1167,7 @@ func configDBTables2Msi(tblPath *tablePath, msi *map[string]interface{}) error {
 		}
 		parts := strings.SplitN(dbkey, tblPath.delimitor, 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("dbkey: %s, failed split from delimitor %v", dbkey, tblPath.delimitor)
+			return fmt.Errorf("dbkey: %s, failed split from delimiter %v", dbkey, tblPath.delimitor)
 		}
 		table, ok := (*msi)[parts[0]].(map[string]interface{})
 		if !ok {
