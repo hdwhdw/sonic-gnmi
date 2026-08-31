@@ -36,6 +36,9 @@ import (
 )
 
 func TestRunTelemetry(t *testing.T) {
+	originalArgs := os.Args
+	t.Cleanup(func() { os.Args = originalArgs })
+
 	patches := gomonkey.ApplyFunc(startGNMIServer, func(_ *TelemetryConfig, _ *gnmi.Config, serverControlSignal chan ServerControlValue, stopSignalHandler chan<- bool, serverError chan<- error, wg *sync.WaitGroup) {
 		defer wg.Done()
 	})
@@ -90,9 +93,13 @@ func TestMainExitsNonzeroOnSetupFailure(t *testing.T) {
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestMainExitsNonzeroOnSetupFailure$")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() failed: %v", err)
+	}
+	cmd := exec.Command(executable, "-test.run=^TestMainExitsNonzeroOnSetupFailure$")
 	cmd.Env = append(os.Environ(), "TEST_TELEMETRY_MAIN=1")
-	err := cmd.Run()
+	err = cmd.Run()
 	exitErr, ok := err.(*exec.ExitError)
 	if !ok || exitErr.ExitCode() != 1 {
 		t.Fatalf("telemetry exit = %v, want status 1", err)
