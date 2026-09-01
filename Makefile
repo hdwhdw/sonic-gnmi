@@ -157,8 +157,8 @@ endif
 	git apply patches/0003-Fix-client-json-parsing-issue.patch
 
 # Manually adding patched client packages and their dependencies
-# to vendor/modules.txt. This satisfies 'go install -mod=vendor' lookup checks,
-# which are required after manual patching/copying of gnxi and gnmi-cli code.
+# to vendor/modules.txt. This satisfies vendor lookup checks after manually
+# patching and copying gnxi and gnmi-cli code.
 	echo "github.com/google/gnxi v0.0.0-20181220173256-89f51f0ce1e2" >> vendor/modules.txt
 	echo "github.com/google/gnxi/gnmi_get" >> vendor/modules.txt
 	echo "github.com/google/gnxi/gnmi_set" >> vendor/modules.txt
@@ -447,16 +447,9 @@ install:
 
 
 deinstall:
-	rm $(DESTDIR)/usr/sbin/telemetry
-ifneq ($(ENABLE_DIALOUT_VALUE),0)
-	rm $(DESTDIR)/usr/sbin/dialout_client_cli
-endif
-	rm $(DESTDIR)/usr/sbin/gnmi_get
-	rm $(DESTDIR)/usr/sbin/gnmi_set
-	rm $(DESTDIR)/usr/sbin/gnoi_client
-	rm $(DESTDIR)/usr/sbin/gnoi_openconfig_client
-	rm $(DESTDIR)/usr/sbin/gnoi_sonic_client
-	rm $(DESTDIR)/usr/sbin/gnmi_dump
+	@set -e; for binary in $(PRODUCT_BINARIES); do \
+		rm $(DESTDIR)/usr/sbin/$$binary; \
+	done
 
 
 TARGET_BRANCH ?= origin/master
